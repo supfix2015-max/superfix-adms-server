@@ -121,4 +121,39 @@ class AdminDashboardRouteTest extends TestCase
             'created_by' => null,
         ]);
     }
+
+    public function test_deleted_authenticated_user_does_not_break_command_queue_foreign_key(): void
+    {
+        $user = User::query()->create([
+            'name' => 'Former User',
+            'email' => 'deleted-queue@example.com',
+            'role' => 'admin',
+            'email_verified_at' => now(),
+            'password' => 'password',
+        ]);
+
+        $device = Device::query()->create([
+            'name' => 'Main Gate',
+            'sn' => 'ACME002',
+            'serial_number' => 'ACME002',
+            'status' => 'active',
+        ]);
+
+        $this->actingAs($user);
+        $user->forceDelete();
+
+        $response = $this->from('/admin/dashboard')
+            ->post(route('admin.devices.command', $device), [
+                'command' => 'REBOOT',
+            ]);
+
+        $response->assertRedirect('/admin/dashboard');
+
+        $this->assertDatabaseHas('device_commands', [
+            'device_id' => $device->id,
+            'command' => 'RESTART',
+            'status' => 'pending',
+            'created_by' => null,
+        ]);
+    }
 }

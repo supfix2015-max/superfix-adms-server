@@ -286,6 +286,86 @@ class UserSyncService
         return $queued;
     }
 
+    public function queueGlobalUserSync(bool $force = false, string $trigger = 'manual'): array
+    {
+        $refreshSummary = $this->refreshDeviceSafeDataset();
+        $activeDevices = $this->deviceRepository->getActive();
+        $dataset = $this->deviceSafeDataset();
+
+        $syncIds = [];
+        $batches = [];
+        $newBatchCount = 0;
+
+        foreach ($activeDevices as $device) {
+            $beforeId = DeviceSync::query()->max('id') ?? 0;
+            $batch = $this->queueFullSyncForDevice($device, $force, $trigger);
+
+            if (! $batch) {
+                continue;
+            }
+
+            $syncIds[] = $batch->id;
+            $batches[] = [
+                'id' => $batch->id,
+                'device_id' => $batch->device_id,
+                'status' => $batch->status,
+                'total_records' => $batch->total_records,
+            ];
+
+            if ($batch->id > $beforeId) {
+                $newBatchCount++;
+            }
+        }
+
+        return [
+            'sync_ids' => $syncIds,
+            'batches' => $batches,
+            'summary' => [
+                'active_device_count' => $activeDevices->count(),
+                'safe_user_count' => $dataset->count(),
+                'new_batch_count' => $newBatchCount,
+                'refresh' => $refreshSummary,
+            ],
+        ];
+    }
+
+    public function syncBatchStatus(array $syncIds): array
+    {
+        $batches = DeviceSync::query()
+            ->whereIn('id', $syncIds)
+            ->orderBy('id')
+            ->get([
+                'id',
+                'device_id',
+                'status',
+                'total_records',
+                'queued_records',
+                'processed_records',
+                'successful_records',
+                'failed_records',
+                'sync_started_at',
+                'sync_completed_at',
+                'error_message',
+            ]);
+
+        return [
+            'sync_ids' => $batches->pluck('id')->all(),
+            'batches' => $batches->map(static fn (DeviceSync $batch): array => [
+                'id' => $batch->id,
+                'device_id' => $batch->device_id,
+                'status' => $batch->status,
+                'total_records' => $batch->total_records,
+                'queued_records' => $batch->queued_records,
+                'processed_records' => $batch->processed_records,
+                'successful_records' => $batch->successful_records,
+                'failed_records' => $batch->failed_records,
+                'sync_started_at' => $batch->sync_started_at?->toIso8601String(),
+                'sync_completed_at' => $batch->sync_completed_at?->toIso8601String(),
+                'error_message' => $batch->error_message,
+            ])->all(),
+        ];
+    }
+
     public function dispatchQueuedBatch(int $deviceSyncId): void
     {
         /** @var DeviceSync $sync */

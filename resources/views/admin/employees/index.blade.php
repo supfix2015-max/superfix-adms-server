@@ -18,6 +18,9 @@
         </form>
     </div>
     <div class="col-md-4 text-end">
+        <button type="button" class="btn btn-success" onclick="syncEmployees()">
+            <i class="bi bi-arrow-repeat"></i> Sync Employees
+        </button>
         <a href="{{ route('admin.employees.create') }}" class="btn btn-success">
             <i class="bi bi-plus"></i> Add Employee
         </a>
@@ -71,4 +74,33 @@
 <nav class="mt-3">
     {{ $employees->links('pagination::bootstrap-5') }}
 </nav>
+
+@push('extra_js')
+<script>
+function syncEmployees() {
+    if (!confirm('Queue user sync for all active devices? This may take time.')) return;
+    
+    fetch('{{ route("admin.user-syncs.store") }}', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-TOKEN': '{{ csrf_token() }}'
+        },
+        body: JSON.stringify({force: false})
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.error) {
+            alert('Error: ' + data.message);
+        } else {
+            alert(data.message);
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('Sync failed. Check console.');
+    });
+}
+</script>
+@endpush
 @endsection

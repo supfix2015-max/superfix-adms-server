@@ -7,6 +7,7 @@ use App\Models\DeviceCommand;
 use App\Models\DeviceSync;
 use App\Repositories\DeviceCommandRepository;
 use Illuminate\Support\Arr;
+use Illuminate\Support\Facades\DB;
 
 class CommandService
 {
@@ -53,7 +54,7 @@ class CommandService
             'parameters' => $normalizedParameters,
             'fingerprint' => $fingerprint,
             'status' => DeviceCommand::STATUS_PENDING,
-            'created_by' => $context['created_by'] ?? auth()->id(),
+            'created_by' => $this->resolveCreatedById($context['created_by'] ?? null),
             'expires_at' => $context['expires_at'] ?? now()->addSeconds((int) config('zkteco.command_ttl_seconds', 900)),
         ]);
     }
@@ -221,6 +222,19 @@ class CommandService
         Arr::sortRecursive($parameters);
 
         return $parameters;
+    }
+
+    private function resolveCreatedById(?int $candidateUserId = null): ?int
+    {
+        $userId = $candidateUserId ?? auth()->id();
+
+        if (! $userId) {
+            return null;
+        }
+
+        return DB::table('users')->where('id', $userId)->exists()
+            ? (int) $userId
+            : null;
     }
 
     private function buildFingerprint(string $command, ?string $protocolCommand, array $parameters, array $context): string

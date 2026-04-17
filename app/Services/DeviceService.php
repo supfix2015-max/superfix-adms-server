@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\Device;
 use App\Models\DeviceCommand;
 use App\Repositories\DeviceRepository;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 class DeviceService
@@ -109,7 +110,7 @@ class DeviceService
                 'notes' => $notes,
             ]), static fn ($value) => $value !== null && $value !== ''),
             'status' => DeviceCommand::STATUS_PENDING,
-            'created_by' => auth()->id(),
+            'created_by' => $this->resolveCreatedById(),
         ]);
     }
 
@@ -124,6 +125,31 @@ class DeviceService
             ], static fn ($value) => $value !== null && $value !== ''),
             $notes
         );
+    }
+
+    public function ensurePullEmployeesQueued(int $deviceId, ?string $employeeCode = null, ?string $notes = null): DeviceCommand
+    {
+        $existing = DeviceCommand::query()
+            ->where('device_id', $deviceId)
+            ->where('command', 'PULL_EMPLOYEES')
+            ->whereIn('status', [
+                DeviceCommand::STATUS_PENDING,
+                DeviceCommand::STATUS_SENT,
+            ])
+            ->when($employeeCode !== null && $employeeCode !== '', function ($query) use ($employeeCode): void {
+                $query->where(function ($builder) use ($employeeCode): void {
+                    $builder->where('parameters->employee_code', $employeeCode)
+                        ->orWhere('parameters->pin', $employeeCode);
+                });
+            })
+            ->oldest('created_at')
+            ->first();
+
+        if ($existing) {
+            return $existing;
+        }
+
+        return $this->queuePullEmployees($deviceId, $employeeCode, $notes);
     }
 
     public function queuePullAttendance(int $deviceId, ?string $startTime = null, ?string $endTime = null, ?string $notes = null): DeviceCommand
@@ -211,5 +237,18 @@ class DeviceService
     public function restoreDevice(int $deviceId): bool
     {
         return $this->repository->restore($deviceId);
+    }
+
+    private function resolveCreatedById(): ?int
+    {
+        $userId = auth()->id();
+
+        if (! $userId) {
+            return null;
+        }
+
+        return DB::table('users')->where('id', $userId)->exists()
+            ? (int) $userId
+            : null;
     }
 }

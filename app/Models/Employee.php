@@ -6,32 +6,42 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Str;
 
 class Employee extends Model
 {
-    use HasFactory;
+    use HasFactory, SoftDeletes;
 
     protected $fillable = [
         'employee_id',
         'device_id',
         'uid',
+        'sync_uid',
         'card_no',
         'name',
+        'sync_name',
         'first_name',
         'last_name',
         'email',
         'phone',
         'department',
         'status',
+        'sync_enabled',
         'hire_date',
         'notes',
         'raw_payload',
+        'sync_validation_errors',
+        'last_sync_validated_at',
+        'last_synced_payload_hash',
     ];
 
     protected $casts = [
         'hire_date' => 'date',
         'raw_payload' => 'array',
+        'sync_enabled' => 'boolean',
+        'sync_validation_errors' => 'array',
+        'last_sync_validated_at' => 'datetime',
     ];
 
     protected $appends = ['full_name'];
@@ -91,6 +101,14 @@ class Employee extends Model
     public function scopeActive($query)
     {
         return $query->where('status', 'active');
+    }
+
+    public function scopeSyncSafe($query)
+    {
+        return $query
+            ->where('sync_enabled', true)
+            ->whereNotNull('sync_uid')
+            ->whereNotNull('sync_name');
     }
 
     public function scopeSearch($query, string $search)

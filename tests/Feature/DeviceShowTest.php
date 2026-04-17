@@ -25,9 +25,9 @@ class DeviceShowTest extends TestCase
         ]);
 
         $device = Device::query()->create([
-            'name' => 'ZKTeco NYU7254801353',
-            'sn' => 'NYU7254801353',
-            'serial_number' => 'NYU7254801353',
+            'name' => 'ZKTeco TEST-SHOW-001',
+            'sn' => 'TEST-SHOW-001',
+            'serial_number' => 'TEST-SHOW-001',
             'status' => 'active',
             'last_seen' => now(),
             'last_heartbeat' => now(),
@@ -73,9 +73,9 @@ class DeviceShowTest extends TestCase
         ]);
 
         $device = Device::query()->create([
-            'name' => 'ZKTeco NYU7254801353',
-            'sn' => 'NYU7254801353',
-            'serial_number' => 'NYU7254801353',
+            'name' => 'ZKTeco TEST-SHOW-002',
+            'sn' => 'TEST-SHOW-002',
+            'serial_number' => 'TEST-SHOW-002',
             'status' => 'active',
         ]);
 

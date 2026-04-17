@@ -67,6 +67,7 @@
         }
     </style>
     @yield('extra_css')
+    @stack('extra_css')
 </head>
 <body>
     <div class="sidebar">
@@ -137,5 +138,6 @@
     </div>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     @yield('extra_js')
+    @stack('extra_js')
 </body>
 </html>

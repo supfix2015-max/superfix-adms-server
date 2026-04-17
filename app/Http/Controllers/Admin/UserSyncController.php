@@ -16,17 +16,10 @@ class UserSyncController extends Controller
 
     public function store(Request $request): JsonResponse
     {
-        if (! $request->user()?->isAdmin()) {
-            return response()->json([
-                'message' => 'Admin access is required to sync users.',
-                'error' => 'forbidden',
-            ], 403);
-        }
-
         try {
             $result = $this->userSyncService->queueGlobalUserSync(
                 $request->boolean('force'),
-                'dashboard_ajax'
+                'employee_page_ajax'
             );
         } catch (\Throwable $exception) {
             Log::error('adms.user_sync.queue_failed', [
@@ -87,19 +80,12 @@ class UserSyncController extends Controller
             'summary' => $result['summary'],
             'sync_ids' => $result['sync_ids'],
             'batches' => $result['batches'],
-            'status_url' => route('device.sync-users.status'),
+            'status_url' => route('admin.user-syncs.status'),
         ], 202);
     }
 
     public function status(Request $request): JsonResponse
     {
-        if (! $request->user()?->isAdmin()) {
-            return response()->json([
-                'message' => 'Admin access is required to inspect sync status.',
-                'error' => 'forbidden',
-            ], 403);
-        }
-
         $syncIds = collect($request->input('sync_ids', []));
 
         if (! is_array($request->input('sync_ids'))) {

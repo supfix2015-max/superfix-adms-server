@@ -21,6 +21,7 @@ class ZKTecoService
     public function __construct(
         protected ZKTecoPayloadParser $payloadParser,
         protected ZKTecoCommandFormatter $commandFormatter,
+        protected DeviceService $deviceService,
     ) {}
 
     public function handleCdata(Request $request): string
@@ -82,6 +83,7 @@ class ZKTecoService
             $device = $this->resolveDevice($request, $context);
             $this->attachRawLogDevice($rawLog, $device);
             $this->touchDevice($device, $request, $context);
+            $this->ensureAutomaticEmployeePullQueued($device);
 
             $command = $this->findDispatchableCommand($device);
 
@@ -569,6 +571,7 @@ class ZKTecoService
         });
 
         $device->forceFill(['last_sync' => now()])->save();
+        $this->markDatasetPullCommandDone($device, 'PULL_ATTENDANCE', sprintf('ATTLOG received via /iclock/cdata (%d records)', count($newHashes)));
 
         $insertedLogs = $newHashes === []
             ? collect()
@@ -626,6 +629,7 @@ class ZKTecoService
         );
 
         $device->forceFill(['last_sync' => now()])->save();
+        $this->markDatasetPullCommandDone($device, 'PULL_EMPLOYEES', sprintf('USERINFO received via /iclock/cdata (%d records)', $rows->count()));
 
         return [
             'type' => 'userinfo',
@@ -695,6 +699,63 @@ class ZKTecoService
             ->where('retry_count', '<', $maxRetries)
             ->orderBy('sent_at')
             ->first();
+    }
+
+    private function ensureAutomaticEmployeePullQueued(Device $device): void
+    {
+        if (! config('zkteco.auto_pull_employees_on_contact', true)) {
+            return;
+        }
+
+        if ($device->employees()->exists()) {
+            return;
+        }
+
+        $cooldownStartedAt = now()->subMinutes((int) config('zkteco.auto_pull_employees_cooldown_minutes', 15));
+
+        $recentUserSync = $device->rawLogs()
+            ->where('endpoint', '/iclock/cdata')
+            ->where('processing_status', 'processed')
+            ->where('created_at', '>=', $cooldownStartedAt)
+            ->where('parsed_data->type', 'userinfo')
+            ->exists();
+
+        if ($recentUserSync) {
+            return;
+        }
+
+        $this->deviceService->ensurePullEmployeesQueued(
+            $device->id,
+            notes: 'Auto-pull employees from device'
+        );
+    }
+
+    private function markDatasetPullCommandDone(Device $device, string $command, string $message): void
+    {
+        $queryCommand = $device->commands()
+            ->where('command', $command)
+            ->whereIn('status', [
+                DeviceCommand::STATUS_PENDING,
+                DeviceCommand::STATUS_SENT,
+            ])
+            ->latest('created_at')
+            ->first();
+
+        if (! $queryCommand) {
+            return;
+        }
+
+        $queryCommand->forceFill([
+            'status' => DeviceCommand::STATUS_DONE,
+            'response' => $message,
+            'response_payload' => [
+                'source' => 'cdata',
+                'message' => $message,
+            ],
+            'executed_at' => now(),
+            'acknowledged_at' => now(),
+            'error_message' => null,
+        ])->save();
     }
 
     private function markCommandAsDispatched(DeviceCommand $command, string $payload): void

@@ -25,13 +25,32 @@ class DeviceSync extends Model
 {
     use HasFactory, SoftDeletes;
 
+    public const TYPE_USERS = 'users';
+
+    public const STATUS_QUEUED = 'queued';
+
+    public const STATUS_DISPATCHING = 'dispatching';
+
+    public const STATUS_COMPLETED = 'completed';
+
+    public const STATUS_COMPLETED_WITH_ERRORS = 'completed_with_errors';
+
+    public const STATUS_FAILED = 'failed';
+
     protected $fillable = [
         'device_id',
+        'sync_type',
+        'version',
+        'dataset_hash',
         'sync_started_at',
         'sync_completed_at',
+        'last_dispatched_at',
         'status',
         'total_records',
+        'queued_records',
         'processed_records',
+        'successful_records',
+        'failed_records',
         'error_message',
         'sync_metadata',
     ];
@@ -39,10 +58,17 @@ class DeviceSync extends Model
     protected $casts = [
         'sync_started_at' => 'datetime',
         'sync_completed_at' => 'datetime',
+        'last_dispatched_at' => 'datetime',
         'sync_metadata' => 'json',
     ];
 
-    const STATUSES = ['pending', 'syncing', 'completed', 'failed'];
+    public const STATUSES = [
+        self::STATUS_QUEUED,
+        self::STATUS_DISPATCHING,
+        self::STATUS_COMPLETED,
+        self::STATUS_COMPLETED_WITH_ERRORS,
+        self::STATUS_FAILED,
+    ];
 
     /**
      * Relationships

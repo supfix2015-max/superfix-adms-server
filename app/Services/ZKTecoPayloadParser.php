@@ -342,9 +342,13 @@ class ZKTecoPayloadParser
     {
         $employeeCode = $this->sanitizeIdentifier($this->lookup($block, [
             'PIN',
+            'USER PIN',
             'UserID',
             'EnrollNumber',
             'UID',
+            'FP PIN',
+            'FACE PIN',
+            'USERPIC PIN',
         ]));
 
         if (

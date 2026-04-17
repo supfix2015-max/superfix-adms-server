@@ -6,6 +6,7 @@ use App\Http\Controllers\Admin\DashboardController;
 use App\Http\Controllers\Admin\DeviceController;
 use App\Http\Controllers\Admin\EmployeeController;
 use App\Http\Controllers\Admin\LogController;
+use App\Http\Controllers\Admin\UserSyncController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', function () {
@@ -19,6 +20,10 @@ Route::prefix('admin')->name('admin.')->group(function () {
     Route::get('devices/{device}/refresh-token', [DeviceController::class, 'refreshToken'])->name('devices.refresh-token');
 
     Route::resource('employees', EmployeeController::class);
+    Route::prefix('user-syncs')->name('user-syncs.')->group(function () {
+        Route::post('/', [UserSyncController::class, 'store'])->name('store');
+        Route::get('/status', [UserSyncController::class, 'status'])->name('status');
+    });
 
     Route::get('attendance', [AttendanceController::class, 'index'])->name('attendance.index');
     Route::get('attendance/export', [AttendanceController::class, 'export'])->name('attendance.export');

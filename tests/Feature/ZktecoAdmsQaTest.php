@@ -189,6 +189,35 @@ class ZktecoAdmsQaTest extends TestCase
         ]);
     }
 
+    public function test_getrequest_auto_queues_pull_employees_for_devices_without_synced_users(): void
+    {
+        $device = Device::query()->create([
+            'name' => 'QA Device',
+            'sn' => 'TEST123',
+            'serial_number' => 'TEST123',
+            'status' => 'active',
+        ]);
+
+        $response = $this->get('/iclock/getrequest?SN=TEST123');
+
+        $response->assertOk();
+
+        $command = DeviceCommand::query()
+            ->where('device_id', $device->id)
+            ->where('command', 'PULL_EMPLOYEES')
+            ->firstOrFail();
+
+        $response->assertSee("C:{$command->id}:DATA QUERY USERINFO", false);
+
+        $this->assertDatabaseHas('device_commands', [
+            'id' => $command->id,
+            'status' => DeviceCommand::STATUS_SENT,
+        ]);
+
+        $this->get('/iclock/getrequest?SN=TEST123')->assertOk()->assertSee('OK', false);
+        $this->assertSame(1, DeviceCommand::query()->where('device_id', $device->id)->where('command', 'PULL_EMPLOYEES')->count());
+    }
+
     public function test_raw_zkteco_command_strings_can_be_inserted_directly_into_the_command_queue(): void
     {
         $device = Device::query()->create([
@@ -319,6 +348,8 @@ class ZktecoAdmsQaTest extends TestCase
         $upload->assertOk();
         $upload->assertSee('OK:2', false);
 
+        $command->refresh();
+
         $this->assertDatabaseHas('employees', [
             'device_id' => $device->id,
             'employee_id' => '9001',
@@ -330,6 +361,50 @@ class ZktecoAdmsQaTest extends TestCase
             'employee_id' => '9002',
             'name' => 'Jane Smith',
             'card_no' => '5678',
+        ]);
+        $this->assertSame(DeviceCommand::STATUS_DONE, $command->status);
+    }
+
+    public function test_operlog_user_payload_variant_is_parsed_and_persisted_as_employees(): void
+    {
+        Device::query()->create([
+            'name' => 'QA Device',
+            'sn' => 'TEST123',
+            'serial_number' => 'TEST123',
+            'status' => 'active',
+        ]);
+
+        $payload = implode("\n", [
+            "USER PIN=1\tName=User 1\tPri=0\tPasswd=\tCard=\tGrp=1\tTZ=0000000100000000\tVerify=-1\tViceCard=\tExpires=0\tStartDatetime=0\tEndDatetime=0",
+            "USER PIN=1001\tName=User 1001\tPri=0\tPasswd=\tCard=1234\tGrp=1\tTZ=0000000100000000\tVerify=-1\tViceCard=\tExpires=0\tStartDatetime=0\tEndDatetime=0",
+        ]);
+
+        $response = $this->call(
+            'POST',
+            '/iclock/cdata?SN=TEST123&table=OPERLOG&Stamp=10',
+            [],
+            [],
+            [],
+            ['CONTENT_TYPE' => 'text/plain'],
+            $payload,
+        );
+
+        $response->assertOk();
+        $response->assertSee('OK:2', false);
+
+        $this->assertDatabaseHas('employees', [
+            'employee_id' => '1',
+            'name' => 'User 1',
+        ]);
+        $this->assertDatabaseHas('employees', [
+            'employee_id' => '1001',
+            'name' => 'User 1001',
+            'card_no' => '1234',
+        ]);
+        $this->assertDatabaseHas('raw_logs', [
+            'endpoint' => '/iclock/cdata',
+            'processing_status' => 'processed',
+            'record_count' => 2,
         ]);
     }
 

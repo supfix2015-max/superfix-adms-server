@@ -19,7 +19,10 @@ class ZktecoAdmsTest extends TestCase
         $response->assertOk();
         $response->assertSee('GET OPTION FROM: ACME001', false);
 
-        $device = Device::query()->firstOrFail();
+        $device = Device::query()
+            ->where('serial_number', 'ACME001')
+            ->latest('id')
+            ->firstOrFail();
 
         $this->assertSame('ACME001', $device->serial_number);
         $this->assertDatabaseHas('raw_logs', [
