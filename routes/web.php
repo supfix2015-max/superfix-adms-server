@@ -1,0 +1,42 @@
+<?php
+
+use App\Http\Controllers\Admin\AttendanceController;
+use App\Http\Controllers\Admin\CommandController;
+use App\Http\Controllers\Admin\DashboardController;
+use App\Http\Controllers\Admin\DeviceController;
+use App\Http\Controllers\Admin\EmployeeController;
+use App\Http\Controllers\Admin\LogController;
+use Illuminate\Support\Facades\Route;
+
+Route::get('/', function () {
+    return redirect('/admin/dashboard');
+});
+
+Route::prefix('admin')->name('admin.')->group(function () {
+    Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
+
+    Route::resource('devices', DeviceController::class);
+    Route::get('devices/{device}/refresh-token', [DeviceController::class, 'refreshToken'])->name('devices.refresh-token');
+
+    Route::resource('employees', EmployeeController::class);
+
+    Route::get('attendance', [AttendanceController::class, 'index'])->name('attendance.index');
+    Route::get('attendance/export', [AttendanceController::class, 'export'])->name('attendance.export');
+
+    Route::post('devices/{device}/command', [DeviceController::class, 'queueCommand'])->name('devices.command');
+    Route::post('devices/{device}/pull', [DeviceController::class, 'pullData'])->name('devices.pull');
+    Route::resource('commands', CommandController::class)->only(['index', 'create', 'store', 'show']);
+    Route::resource('logs', LogController::class)->only(['index']);
+    Route::get('logs/{id}/raw', [LogController::class, 'rawPayload'])->name('logs.raw');
+});
+
+require __DIR__.'/auth.php';
+
+Route::group([], function () {
+    Route::get('devices/attendance', [DeviceController::class, 'Attendance'])->name('devices.Attendance');
+    Route::get('devices/daily', [DeviceController::class, 'daily'])->name('devices.daily');
+    Route::get('devices/monthly', [DeviceController::class, 'monthly'])->name('devices.monthly');
+    Route::get('devices/attendance/ajax', [DeviceController::class, 'getAttendance'])->name('devices.getAttendance');
+    Route::get('devices/daily/ajax', [DeviceController::class, 'getDailyAttendanceSummary'])->name('devices.getDailyAttendanceSummary');
+    Route::get('devices/monthly/ajax', [DeviceController::class, 'getMonthlyAttendanceSummary'])->name('devices.getMonthlyAttendanceSummary');
+});
