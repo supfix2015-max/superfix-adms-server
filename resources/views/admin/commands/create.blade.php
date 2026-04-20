@@ -94,7 +94,7 @@ document.querySelector('[name="command"]').addEventListener('change', function()
     // Command-specific parameters
     const params = {
         'UPDATE_TIME': [
-            {name: 'timestamp', label: 'Timestamp', type: 'datetime-local'}
+            {name: 'timestamp', label: 'Timestamp (optional, blank = server system time)', type: 'datetime-local'}
         ],
         'PULL_ATTENDANCE': [
             {name: 'start_time', label: 'Start Time (optional)', type: 'text'},

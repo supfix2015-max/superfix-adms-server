@@ -137,8 +137,17 @@ class DeviceController extends Controller
     public function queueCommand(Request $request, Device $device)
     {
         $validated = $request->validate([
-            'command' => 'required|string|in:REBOOT,UPDATE_TIME,CLEAR_LOGS,ENABLE_ATTENDANCE,PULL_EMPLOYEES,PULL_ATTENDANCE',
+'command' => 'required|string|in:REBOOT,UPDATE_TIME,CLEAR_LOGS,ClearAdmin,ENABLE_ATTENDANCE,PULL_EMPLOYEES,PULL_ATTENDANCE,RM_ADMIN_PRIVILEGE',
         ]);
+
+        if ($validated['command'] === 'UPDATE_TIME') {
+            [$timezoneCommand, $timeCommand] = $this->deviceService->queueTimeSync($device->id);
+
+            return back()->with(
+                'success',
+                "Time sync queued for {$device->name} ({$timezoneCommand->id}: timezone, {$timeCommand->id}: date/time)."
+            );
+        }
 
         $this->deviceService->queueDeviceCommand($device->id, $validated['command']);
 

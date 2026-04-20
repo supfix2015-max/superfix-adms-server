@@ -2,10 +2,12 @@
 
 namespace App\Services;
 
+use App\Events\BiometricTemplateStored;
 use App\Models\AttendanceLog;
 use App\Models\Device;
 use App\Models\DeviceCommand;
 use App\Models\Employee;
+use App\Models\EmployeeBiometric;
 use App\Models\ErrorLog;
 use App\Models\RawLog;
 use Illuminate\Auth\Access\AuthorizationException;
@@ -22,6 +24,9 @@ class ZKTecoService
         protected ZKTecoPayloadParser $payloadParser,
         protected ZKTecoCommandFormatter $commandFormatter,
         protected DeviceService $deviceService,
+        protected UserSyncService $userSyncService,
+        protected CommandService $commandService,
+        protected SystemClockService $systemClockService,
     ) {}
 
     public function handleCdata(Request $request): string
@@ -146,7 +151,7 @@ class ZKTecoService
             $updated = 0;
 
             foreach ($records as $record) {
-                $command = $this->resolveCommandForReply($device, $record);
+                $command = $this->commandService->resolveCommandForReply($device, $record);
 
                 if (! $command) {
                     Log::warning('Received unmatched ZKTeco command callback', [
@@ -158,23 +163,7 @@ class ZKTecoService
                     continue;
                 }
 
-                $successful = $this->isSuccessfulCommandReply($record['Return'] ?? null);
-
-                if ($command->status === DeviceCommand::STATUS_DONE && $successful) {
-                    $updated++;
-
-                    continue;
-                }
-
-                $command->forceFill([
-                    'status' => $successful ? DeviceCommand::STATUS_DONE : DeviceCommand::STATUS_FAILED,
-                    'response' => $this->buildCommandResponseText($record, $context['raw_body']),
-                    'response_payload' => $record,
-                    'executed_at' => now(),
-                    'acknowledged_at' => now(),
-                    'error_message' => $successful ? null : ($record['Message'] ?? $record['Error'] ?? 'Device command failed'),
-                ])->save();
-
+                $this->commandService->recordDeviceReply($command, $record, $context['raw_body']);
                 $updated++;
             }
 
@@ -213,14 +202,46 @@ class ZKTecoService
 
     private function processCdataPayload(Device $device, array $context): array
     {
-        $payloadType = $this->payloadParser->detectPayloadType($context['raw_body'], $context['table']);
+        if ($context['raw_body'] === '') {
+            return $this->mergeDeviceMetadata($device, $context);
+        }
 
-        return match ($payloadType) {
-            'attendance' => $this->storeAttendanceLogs($device, $context),
-            'userinfo' => $this->syncUsers($device, $context),
-            'metadata', 'options' => $this->mergeDeviceMetadata($device, $context),
-            default => throw new \InvalidArgumentException('Malformed or unsupported device payload'),
-        };
+        $attendancePayload = $this->payloadParser->parseAttendancePayload($context['raw_body']);
+        if ($attendancePayload['records'] !== []) {
+            return $this->storeAttendanceLogs($device, $context, $attendancePayload);
+        }
+
+        $userPayload = $this->payloadParser->parseUserPayload($context['raw_body']);
+        $biometricPayload = $this->payloadParser->parseBiometricPayload($context['raw_body']);
+
+        if ($userPayload['records'] !== [] && $biometricPayload['records'] !== []) {
+            $userResult = $this->syncUsers($device, $context, $userPayload);
+            $biometricResult = $this->storeBiometrics($device, $context, $biometricPayload);
+            $warnings = array_values(array_unique(array_merge($userResult['warnings'], $biometricResult['warnings'])));
+            $count = $userResult['count'] + $biometricResult['count'];
+
+            return [
+                'type' => 'userinfo_biometric',
+                'count' => $count,
+                'warnings' => $warnings,
+                'metadata' => [
+                    'table' => $context['table'] ?? 'OPERLOG',
+                    'components' => ['userinfo', 'biometric'],
+                    'warnings' => $warnings,
+                ],
+                'response' => "OK:{$count}\r\n",
+            ];
+        }
+
+        if ($userPayload['records'] !== []) {
+            return $this->syncUsers($device, $context, $userPayload);
+        }
+
+        if ($biometricPayload['records'] !== []) {
+            return $this->storeBiometrics($device, $context, $biometricPayload);
+        }
+
+        return $this->mergeDeviceMetadata($device, $context);
     }
 
     private function buildContext(Request $request, string $endpoint): array
@@ -447,7 +468,7 @@ class ZKTecoService
             'TransTimes='.config('zkteco.option_trans_times'),
             'TransInterval='.config('zkteco.option_trans_interval'),
             'TransFlag='.config('zkteco.option_trans_flag'),
-            'TimeZone='.config('zkteco.option_timezone'),
+            'TimeZone='.$this->resolveOptionTimezone(),
             'Realtime='.(config('zkteco.option_realtime') ? '1' : '0'),
             'Encrypt='.(config('zkteco.option_encrypt') ? '1' : '0'),
         ];
@@ -455,9 +476,9 @@ class ZKTecoService
         return implode("\r\n", $lines)."\r\n";
     }
 
-    private function storeAttendanceLogs(Device $device, array $context): array
+    private function storeAttendanceLogs(Device $device, array $context, ?array $parsed = null): array
     {
-        $parsed = $this->payloadParser->parseAttendancePayload($context['raw_body']);
+        $parsed ??= $this->payloadParser->parseAttendancePayload($context['raw_body']);
         if ($parsed['records'] === []) {
             throw new \InvalidArgumentException('Malformed attendance payload');
         }
@@ -591,61 +612,172 @@ class ZKTecoService
         ];
     }
 
-    private function syncUsers(Device $device, array $context): array
+    private function syncUsers(Device $device, array $context, ?array $parsed = null): array
     {
-        $parsed = $this->payloadParser->parseUserPayload($context['raw_body']);
+        $ingested = $this->userSyncService->ingestDeviceUsers($device, $context['raw_body'], $parsed);
+
+        $device->forceFill(['last_sync' => now()])->save();
+        $this->markDatasetPullCommandDone($device, 'PULL_EMPLOYEES', sprintf('USERINFO received via /iclock/cdata (%d records)', $ingested['count']));
+
+        return [
+            'type' => 'userinfo',
+            'count' => $ingested['count'],
+            'warnings' => $ingested['warnings'],
+            'metadata' => [
+                'table' => 'USERINFO',
+                'warnings' => $ingested['warnings'],
+            ],
+            'response' => 'OK:'.$ingested['count']."\r\n",
+        ];
+    }
+
+    private function storeBiometrics(Device $device, array $context, ?array $parsed = null): array
+    {
+        $parsed ??= $this->payloadParser->parseBiometricPayload($context['raw_body']);
         if ($parsed['records'] === []) {
-            throw new \InvalidArgumentException('Malformed user payload');
+            throw new \InvalidArgumentException('Malformed biometric payload');
         }
 
+        $employeeMap = Employee::query()
+            ->whereIn('employee_id', collect($parsed['records'])->pluck('employee_code')->unique()->all())
+            ->get()
+            ->keyBy('employee_id');
+
         $rows = collect($parsed['records'])
-            ->map(function (array $record) use ($device): array {
+            ->map(function (array $record) use ($device, $employeeMap): array {
                 $employeeCode = trim((string) ($record['employee_code'] ?? ''));
+                $templateIndex = trim((string) ($record['template_index'] ?? ''));
+                $fileName = trim((string) ($record['file_name'] ?? ''));
+                $syncKey = sha1(json_encode([
+                    'device_id' => $device->id,
+                    'employee_code' => $employeeCode,
+                    'biometric_type' => $record['biometric_type'] ?? null,
+                    'template_index' => $templateIndex !== '' ? $templateIndex : null,
+                    'file_name' => $fileName !== '' ? $fileName : null,
+                ], JSON_THROW_ON_ERROR));
+
+                $templateData = $record['template_data'] ?? null;
+                $dataSize = $record['data_size'] ?? null;
+
+                if ($dataSize === null && $templateData !== null) {
+                    $dataSize = strlen((string) $templateData);
+                }
 
                 return [
-                    'employee_id' => $employeeCode,
                     'device_id' => $device->id,
-                    'uid' => $record['uid'] ?? $employeeCode,
-                    'card_no' => $record['card_no'] ?? null,
-                    'name' => ($record['name'] ?? null) ?: "User {$employeeCode}",
-                    'status' => 'active',
+                    'employee_id' => $employeeMap->get($employeeCode)?->id,
+                    'employee_code' => $employeeCode,
+                    'biometric_type' => $record['biometric_type'],
+                    'template_index' => $templateIndex !== '' ? $templateIndex : null,
+                    'file_name' => $fileName !== '' ? $fileName : null,
+                    'is_valid' => $record['is_valid'],
+                    'data_size' => $dataSize,
+                    'template_data' => $templateData,
+                    'sync_key' => $syncKey,
                     'raw_payload' => json_encode($record['raw'] ?? $record, JSON_THROW_ON_ERROR | JSON_INVALID_UTF8_SUBSTITUTE),
                     'updated_at' => now(),
                     'created_at' => now(),
                 ];
             })
-            ->filter(fn (array $record): bool => $record['employee_id'] !== '')
-            ->unique('employee_id')
+            ->filter(fn (array $row): bool => $row['employee_code'] !== '')
+            ->unique('sync_key')
             ->values();
 
         if ($rows->isEmpty()) {
-            throw new \InvalidArgumentException('No valid user records found');
+            throw new \InvalidArgumentException('No valid biometric records found');
         }
 
-        Employee::query()->upsert(
+        $existingTemplateHashes = EmployeeBiometric::query()
+            ->whereIn('sync_key', $rows->pluck('sync_key')->all())
+            ->get()
+            ->mapWithKeys(static fn (EmployeeBiometric $biometric): array => [
+                $biometric->sync_key => sha1((string) ($biometric->template_data ?? '')),
+            ]);
+
+        EmployeeBiometric::query()->upsert(
             $rows->all(),
-            ['employee_id'],
-            ['device_id', 'uid', 'card_no', 'name', 'status', 'raw_payload', 'updated_at']
+            ['sync_key'],
+            [
+                'employee_id',
+                'employee_code',
+                'biometric_type',
+                'template_index',
+                'file_name',
+                'is_valid',
+                'data_size',
+                'template_data',
+                'raw_payload',
+                'updated_at',
+            ]
         );
 
-        $device->forceFill(['last_sync' => now()])->save();
-        $this->markDatasetPullCommandDone($device, 'PULL_EMPLOYEES', sprintf('USERINFO received via /iclock/cdata (%d records)', $rows->count()));
+        $this->dispatchBiometricTemplateStoredEvents($device, $rows, $employeeMap, $existingTemplateHashes);
+
+        $device->forceFill([
+            'last_sync' => now(),
+            'enrolled_fingerprints' => EmployeeBiometric::query()
+                ->where('device_id', $device->id)
+                ->where('biometric_type', EmployeeBiometric::TYPE_FINGERPRINT)
+                ->count(),
+            'enrolled_faces' => EmployeeBiometric::query()
+                ->where('device_id', $device->id)
+                ->where('biometric_type', EmployeeBiometric::TYPE_FACE)
+                ->count(),
+        ])->save();
 
         return [
-            'type' => 'userinfo',
+            'type' => 'biometric',
             'count' => $rows->count(),
             'warnings' => $parsed['errors'],
             'metadata' => [
-                'table' => 'USERINFO',
+                'table' => $context['table'] ?? 'OPERLOG',
                 'warnings' => $parsed['errors'],
             ],
             'response' => 'OK:'.$rows->count()."\r\n",
         ];
     }
 
+    private function dispatchBiometricTemplateStoredEvents(
+        Device $device,
+        Collection $rows,
+        Collection $employeeMap,
+        Collection $existingTemplateHashes,
+    ): void {
+        $employeesToSync = $rows
+            ->filter(function (array $row) use ($existingTemplateHashes): bool {
+                if (! in_array($row['biometric_type'], [
+                    EmployeeBiometric::TYPE_FINGERPRINT,
+                    EmployeeBiometric::TYPE_FACE,
+                ], true)) {
+                    return false;
+                }
+
+                $templateHash = sha1((string) ($row['template_data'] ?? ''));
+
+                return $existingTemplateHashes->get($row['sync_key']) !== $templateHash;
+            })
+            ->groupBy(static fn (array $row): string => (string) ($row['employee_code'] ?? ''))
+            ->filter(static fn (Collection $group, string $employeeCode): bool => $employeeCode !== '');
+
+        foreach ($employeesToSync as $employeeCode => $group) {
+            $employee = $employeeMap->get($employeeCode)
+                ?? Employee::query()->where('employee_id', $employeeCode)->first();
+
+            if (! $employee) {
+                continue;
+            }
+
+            event(new BiometricTemplateStored(
+                $device,
+                $employee,
+                $group->pluck('sync_key')->filter()->values()->all(),
+            ));
+        }
+    }
+
     private function mergeDeviceMetadata(Device $device, array $context): array
     {
-        $metadata = $this->filterMetadata($context['metadata']);
+        $metadata = $this->filterDeviceMetadata($context['metadata']);
 
         if ($context['raw_body'] !== '' && $metadata === []) {
             throw new \InvalidArgumentException('Malformed or unsupported device payload');
@@ -911,6 +1043,33 @@ class ZKTecoService
             ->map(static fn ($value) => is_string($value) ? trim($value) : $value)
             ->filter(static fn ($value) => $value !== null && $value !== '')
             ->all();
+    }
+
+    private function filterDeviceMetadata(array $metadata): array
+    {
+        return collect($this->filterMetadata($metadata))
+            ->reject(static function ($value, $key): bool {
+                return in_array(strtolower((string) $key), [
+                    'sn',
+                    'table',
+                    'stamp',
+                    'opstamp',
+                    'options',
+                    'option',
+                ], true);
+            })
+            ->all();
+    }
+
+    private function resolveOptionTimezone(): string
+    {
+        $configured = config('zkteco.option_timezone');
+
+        if ($configured !== null && trim((string) $configured) !== '') {
+            return trim((string) $configured);
+        }
+
+        return $this->systemClockService->deviceTimezoneOption();
     }
 
     private function dispatchAttendanceWebhook(Device $device, Collection $logs): void

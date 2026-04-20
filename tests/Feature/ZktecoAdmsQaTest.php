@@ -4,7 +4,10 @@ namespace Tests\Feature;
 
 use App\Models\Device;
 use App\Models\DeviceCommand;
+use App\Models\Employee;
+use App\Models\EmployeeBiometric;
 use App\Services\DeviceService;
+use App\Services\UserSyncService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Tests\TestCase;
@@ -30,6 +33,17 @@ class ZktecoAdmsQaTest extends TestCase
             'endpoint' => '/iclock/cdata',
             'processing_status' => 'processed',
         ]);
+    }
+
+    public function test_option_handshake_uses_system_timezone_offset_when_no_static_timezone_is_configured(): void
+    {
+        config()->set('zkteco.system_timezone', 'Asia/Dhaka');
+        config()->set('zkteco.option_timezone', null);
+
+        $response = $this->get('/iclock/cdata?SN=TEST123&options=all');
+
+        $response->assertOk();
+        $response->assertSee('TimeZone=6', false);
     }
 
     public function test_soft_deleted_device_is_restored_during_handshake_instead_of_causing_duplicate_insert(): void
@@ -400,12 +414,279 @@ class ZktecoAdmsQaTest extends TestCase
             'employee_id' => '1001',
             'name' => 'User 1001',
             'card_no' => '1234',
+            'device_privilege' => 0,
+            'group_code' => '1',
+            'timezone_code' => '0000000100000000',
+            'verification_mode' => '-1',
         ]);
         $this->assertDatabaseHas('raw_logs', [
             'endpoint' => '/iclock/cdata',
             'processing_status' => 'processed',
             'record_count' => 2,
         ]);
+    }
+
+    public function test_biometric_payload_is_persisted_and_updates_device_counters(): void
+    {
+        $device = Device::query()->create([
+            'name' => 'QA Device',
+            'sn' => 'TEST123',
+            'serial_number' => 'TEST123',
+            'status' => 'active',
+        ]);
+
+        $employee = Employee::query()->create([
+            'device_id' => $device->id,
+            'employee_id' => '1001',
+            'uid' => '1001',
+            'sync_uid' => '1001',
+            'name' => 'John Doe',
+            'sync_name' => 'John Doe',
+            'status' => 'active',
+            'sync_enabled' => true,
+        ]);
+
+        $payload = implode("\n", [
+            'FP PIN=1001	FID=0	Size=16	Valid=1	TMP=FINGERPRINT_TEMPLATE',
+            'FACE PIN=1001	FID=50	Size=24	Valid=1	TMP=FACE_TEMPLATE',
+            'USERPIC PIN=1001	FileName=1001.jpg	Size=12	Content=PHOTO_TEMPLATE',
+        ]);
+
+        $response = $this->call(
+            'POST',
+            '/iclock/cdata?SN=TEST123&table=OPERLOG&Stamp=11',
+            [],
+            [],
+            [],
+            ['CONTENT_TYPE' => 'text/plain'],
+            $payload,
+        );
+
+        $response->assertOk();
+        $response->assertSee('OK:3', false);
+
+        $this->assertDatabaseHas('employee_biometrics', [
+            'device_id' => $device->id,
+            'employee_id' => $employee->id,
+            'employee_code' => '1001',
+            'biometric_type' => EmployeeBiometric::TYPE_FINGERPRINT,
+            'template_index' => '0',
+        ]);
+        $this->assertDatabaseHas('employee_biometrics', [
+            'device_id' => $device->id,
+            'employee_id' => $employee->id,
+            'employee_code' => '1001',
+            'biometric_type' => EmployeeBiometric::TYPE_FACE,
+            'template_index' => '50',
+        ]);
+        $this->assertDatabaseHas('employee_biometrics', [
+            'device_id' => $device->id,
+            'employee_id' => $employee->id,
+            'employee_code' => '1001',
+            'biometric_type' => EmployeeBiometric::TYPE_PHOTO,
+            'file_name' => '1001.jpg',
+        ]);
+
+        $device->refresh();
+
+        $this->assertSame(1, $device->enrolled_fingerprints);
+        $this->assertSame(1, $device->enrolled_faces);
+    }
+
+    public function test_full_sync_commands_include_device_credentials(): void
+    {
+        $device = Device::query()->create([
+            'name' => 'QA Device',
+            'sn' => 'TEST123',
+            'serial_number' => 'TEST123',
+            'status' => 'active',
+        ]);
+
+        $employee = Employee::query()->create([
+            'device_id' => $device->id,
+            'employee_id' => '1001',
+            'uid' => '1001',
+            'sync_uid' => '1001',
+            'card_no' => '7788',
+            'device_password' => '2468',
+            'device_privilege' => 3,
+            'group_code' => '1',
+            'timezone_code' => '0000000100000000',
+            'verification_mode' => '-1',
+            'vice_card_no' => 'ABCD',
+            'valid_from' => '2026-04-17 00:00:00',
+            'valid_until' => '2026-12-31 00:00:00',
+            'name' => 'John Device',
+            'sync_name' => 'John Device',
+            'status' => 'active',
+            'sync_enabled' => true,
+        ]);
+
+        app(UserSyncService::class)->refreshDeviceSafeDataset(collect([$employee->fresh()]));
+        $sync = app(UserSyncService::class)->queueFullSyncForDevice($device, true, 'qa');
+        $this->assertNotNull($sync);
+        app(UserSyncService::class)->dispatchQueuedBatch($sync->id);
+
+        $command = DeviceCommand::query()
+            ->where('device_id', $device->id)
+            ->where('command', 'SYNC_EMPLOYEES')
+            ->firstOrFail();
+
+        $response = $this->get('/iclock/getrequest?SN=TEST123');
+
+        $response->assertOk();
+        $response->assertSee("C:{$command->id}:DATA UPDATE USERINFO PIN=1001", false);
+        $response->assertSee('Passwd=2468', false);
+        $response->assertSee('Pri=3', false);
+        $response->assertSee('Card=7788', false);
+        $response->assertSee('Grp=1', false);
+        $response->assertSee('TZ=0000000100000000', false);
+        $response->assertSee('Verify=-1', false);
+        $response->assertSee('ViceCard=ABCD', false);
+        $response->assertSee('StartDatetime=2026-04-17 00:00:00', false);
+        $response->assertSee('EndDatetime=2026-12-31 00:00:00', false);
+    }
+
+    public function test_full_sync_dispatch_includes_biometric_templates_after_userinfo(): void
+    {
+        $targetDevice = Device::query()->create([
+            'name' => 'Target Device',
+            'sn' => 'TARGET123',
+            'serial_number' => 'TARGET123',
+            'status' => 'active',
+        ]);
+
+        $sourceDevice = Device::query()->create([
+            'name' => 'Source Device',
+            'sn' => 'SOURCE123',
+            'serial_number' => 'SOURCE123',
+            'status' => 'active',
+        ]);
+
+        $employee = Employee::query()->create([
+            'device_id' => $sourceDevice->id,
+            'employee_id' => '1001',
+            'uid' => '1001',
+            'sync_uid' => '1001',
+            'name' => 'John Device',
+            'sync_name' => 'John Device',
+            'status' => 'active',
+            'sync_enabled' => true,
+        ]);
+
+        EmployeeBiometric::query()->create([
+            'device_id' => $sourceDevice->id,
+            'employee_id' => $employee->id,
+            'employee_code' => '1001',
+            'biometric_type' => EmployeeBiometric::TYPE_FINGERPRINT,
+            'template_index' => '0',
+            'is_valid' => true,
+            'data_size' => 16,
+            'template_data' => 'FINGERPRINT_TEMPLATE',
+            'sync_key' => sha1('fingerprint-template'),
+        ]);
+
+        EmployeeBiometric::query()->create([
+            'device_id' => $sourceDevice->id,
+            'employee_id' => $employee->id,
+            'employee_code' => '1001',
+            'biometric_type' => EmployeeBiometric::TYPE_FACE,
+            'template_index' => '50',
+            'is_valid' => true,
+            'data_size' => 24,
+            'template_data' => 'FACE_TEMPLATE',
+            'sync_key' => sha1('face-template'),
+        ]);
+
+        app(UserSyncService::class)->refreshDeviceSafeDataset(
+            collect([
+                Employee::query()->with('biometrics')->findOrFail($employee->id),
+            ])
+        );
+
+        $sync = app(UserSyncService::class)->queueFullSyncForDevice($targetDevice, true, 'qa');
+        $this->assertNotNull($sync);
+
+        app(UserSyncService::class)->dispatchQueuedBatch($sync->id);
+
+        $sync->refresh();
+
+        $this->assertSame(3, $sync->total_records);
+        $this->assertSame(3, $sync->queued_records);
+        $this->assertDatabaseHas('device_commands', [
+            'device_id' => $targetDevice->id,
+            'device_sync_id' => $sync->id,
+            'employee_id' => $employee->id,
+            'command' => 'SYNC_BIOMETRICS',
+        ]);
+
+        $userCommand = $this->get('/iclock/getrequest?SN=TARGET123');
+        $fingerprintCommand = $this->get('/iclock/getrequest?SN=TARGET123');
+        $faceCommand = $this->get('/iclock/getrequest?SN=TARGET123');
+
+        $userCommand->assertOk();
+        $userCommand->assertSee('DATA UPDATE USERINFO PIN=1001', false);
+
+        $fingerprintCommand->assertOk();
+        $fingerprintCommand->assertSee('DATA UPDATE FINGERTMP PIN=1001', false);
+        $fingerprintCommand->assertSee('FID=0', false);
+        $fingerprintCommand->assertSee('TMP=FINGERPRINT_TEMPLATE', false);
+
+        $faceCommand->assertOk();
+        $faceCommand->assertSee('DATA UPDATE FACE PIN=1001', false);
+        $faceCommand->assertSee('FID=50', false);
+        $faceCommand->assertSee('TMP=FACE_TEMPLATE', false);
+    }
+
+    public function test_remote_fingerprint_enrollment_command_is_formatted_for_device_polling(): void
+    {
+        $device = Device::query()->create([
+            'name' => 'QA Device',
+            'sn' => 'ENROLLFP123',
+            'serial_number' => 'ENROLLFP123',
+            'status' => 'active',
+        ]);
+
+        $command = app(DeviceService::class)->queueDeviceCommand($device->id, 'ENROLL_FINGERPRINT', [
+            'pin' => '1001',
+            'fid' => '2',
+            'retry' => 4,
+            'overwrite' => true,
+        ]);
+
+        $response = $this->get('/iclock/getrequest?SN=ENROLLFP123');
+
+        $response->assertOk();
+        $response->assertSee("C:{$command->id}:ENROLL_FP PIN=1001", false);
+        $response->assertSee('FID=2', false);
+        $response->assertSee('RETRY=4', false);
+        $response->assertSee('OVERWRITE=1', false);
+    }
+
+    public function test_remote_face_enrollment_command_is_formatted_for_device_polling(): void
+    {
+        $device = Device::query()->create([
+            'name' => 'QA Device',
+            'sn' => 'ENROLLFACE123',
+            'serial_number' => 'ENROLLFACE123',
+            'status' => 'active',
+        ]);
+
+        $command = app(DeviceService::class)->queueDeviceCommand($device->id, 'ENROLL_FACE', [
+            'pin' => '1001',
+            'card_no' => '7788',
+            'retry' => 3,
+            'overwrite' => true,
+        ]);
+
+        $response = $this->get('/iclock/getrequest?SN=ENROLLFACE123');
+
+        $response->assertOk();
+        $response->assertSee("C:{$command->id}:ENROLL_BIO TYPE=2", false);
+        $response->assertSee('PIN=1001', false);
+        $response->assertSee('CardNo=7788', false);
+        $response->assertSee('RETRY=3', false);
+        $response->assertSee('OVERWRITE=1', false);
     }
 
     public function test_pull_attendance_command_is_formatted_for_device_polling(): void
@@ -427,6 +708,57 @@ class ZktecoAdmsQaTest extends TestCase
             'id' => $command->id,
             'status' => DeviceCommand::STATUS_SENT,
         ]);
+    }
+
+    public function test_update_time_dispatch_uses_system_timezone_when_command_has_no_timestamp_parameter(): void
+    {
+        config()->set('app.timezone', 'UTC');
+        config()->set('zkteco.system_timezone', 'Asia/Dhaka');
+        Carbon::setTestNow(Carbon::parse('2026-04-17 12:00:00', 'UTC'));
+        config()->set('zkteco.auto_pull_employees_on_contact', false);
+
+        $device = Device::query()->create([
+            'name' => 'QA Device',
+            'sn' => 'TEST123',
+            'serial_number' => 'TEST123',
+            'status' => 'active',
+        ]);
+
+        $command = DeviceCommand::query()->create([
+            'device_id' => $device->id,
+            'command' => 'UPDATE_TIME',
+            'status' => DeviceCommand::STATUS_PENDING,
+        ]);
+
+        $response = $this->get('/iclock/getrequest?SN=TEST123');
+
+        $response->assertOk();
+        $response->assertSee("C:{$command->id}:SET OPTION DateTime=2026-04-17 18:00:00", false);
+    }
+
+    public function test_time_sync_queues_timezone_before_datetime_for_device_polling(): void
+    {
+        config()->set('app.timezone', 'UTC');
+        config()->set('zkteco.system_timezone', 'Asia/Dhaka');
+        Carbon::setTestNow(Carbon::parse('2026-04-17 12:00:00', 'UTC'));
+        config()->set('zkteco.auto_pull_employees_on_contact', false);
+
+        $device = Device::query()->create([
+            'name' => 'QA Device',
+            'sn' => 'TEST123',
+            'serial_number' => 'TEST123',
+            'status' => 'active',
+        ]);
+
+        [$timezoneCommand, $timeCommand] = app(DeviceService::class)->queueTimeSync($device->id);
+
+        $first = $this->get('/iclock/getrequest?SN=TEST123');
+        $second = $this->get('/iclock/getrequest?SN=TEST123');
+
+        $first->assertOk();
+        $first->assertSee("C:{$timezoneCommand->id}:SET OPTION TimeZone=6", false);
+        $second->assertOk();
+        $second->assertSee("C:{$timeCommand->id}:SET OPTION DateTime=2026-04-17 18:00:00", false);
     }
 
     public function test_missing_serial_number_is_rejected_and_logged(): void
@@ -611,6 +943,8 @@ class ZktecoAdmsQaTest extends TestCase
 
     public function test_retried_command_poll_after_sent_status_returns_ok_without_duplicate_delivery(): void
     {
+        config()->set('zkteco.auto_pull_employees_on_contact', false);
+
         $device = Device::query()->create([
             'name' => 'QA Device',
             'sn' => 'TEST123',
@@ -638,6 +972,7 @@ class ZktecoAdmsQaTest extends TestCase
     public function test_stale_sent_commands_are_retried_after_the_retry_window(): void
     {
         config()->set('zkteco.command_retry_after_seconds', 1);
+        config()->set('zkteco.auto_pull_employees_on_contact', false);
 
         $device = Device::query()->create([
             'name' => 'QA Device',

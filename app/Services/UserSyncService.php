@@ -7,6 +7,7 @@ use App\Jobs\PrepareUserSyncBatchJob;
 use App\Models\Device;
 use App\Models\DeviceSync;
 use App\Models\Employee;
+use App\Models\EmployeeBiometric;
 use App\Repositories\DeviceRepository;
 use App\Repositories\DeviceSyncRepository;
 use App\Repositories\EmployeeRepository;
@@ -24,9 +25,9 @@ class UserSyncService
         protected CommandService $commandService,
     ) {}
 
-    public function ingestDeviceUsers(Device $device, string $rawPayload): array
+    public function ingestDeviceUsers(Device $device, string $rawPayload, ?array $parsed = null): array
     {
-        $parsed = $this->payloadParser->parseUserPayload($rawPayload);
+        $parsed ??= $this->payloadParser->parseUserPayload($rawPayload);
         if ($parsed['records'] === []) {
             throw new \InvalidArgumentException('Malformed user payload');
         }
@@ -38,6 +39,7 @@ class UserSyncService
             $employeeId = $this->normalizeNumericIdentifier($record['employee_code'] ?? null);
             $syncUid = $this->normalizeNumericIdentifier($record['uid'] ?? $record['employee_code'] ?? null);
             $syncName = $this->sanitizeSyncName($record['name'] ?? null);
+            $credentialAttributes = $this->sanitizeCredentialAttributes($record);
 
             if ($employeeId === null || $syncUid === null || $syncName === null) {
                 $warnings[] = sprintf('Rejected malformed user record: %s', json_encode($record, JSON_THROW_ON_ERROR));
@@ -51,12 +53,21 @@ class UserSyncService
                 'uid' => $syncUid,
                 'sync_uid' => $syncUid,
                 'card_no' => $this->sanitizeCardNumber($record['card_no'] ?? null),
+                'device_password' => $credentialAttributes['device_password'],
+                'device_privilege' => $credentialAttributes['device_privilege'],
+                'group_code' => $credentialAttributes['group_code'],
+                'timezone_code' => $credentialAttributes['timezone_code'],
+                'verification_mode' => $credentialAttributes['verification_mode'],
+                'vice_card_no' => $credentialAttributes['vice_card_no'],
+                'valid_from' => $credentialAttributes['valid_from'],
+                'valid_until' => $credentialAttributes['valid_until'],
                 'name' => $syncName,
                 'sync_name' => $syncName,
                 'status' => 'active',
                 'sync_enabled' => true,
                 'sync_validation_errors' => null,
                 'last_sync_validated_at' => now(),
+                'last_synced_payload_hash' => sha1(json_encode($record['raw'] ?? $record, JSON_THROW_ON_ERROR)),
                 'raw_payload' => json_encode($record['raw'] ?? $record, JSON_THROW_ON_ERROR | JSON_INVALID_UTF8_SUBSTITUTE),
                 'updated_at' => now(),
                 'created_at' => now(),
@@ -90,7 +101,7 @@ class UserSyncService
             }
 
             return false;
-        })->values();
+        })->unique('employee_id')->values();
 
         if ($rows->isEmpty()) {
             throw new \InvalidArgumentException('No valid user records found');
@@ -104,20 +115,32 @@ class UserSyncService
                 'uid',
                 'sync_uid',
                 'card_no',
+                'device_password',
+                'device_privilege',
+                'group_code',
+                'timezone_code',
+                'verification_mode',
+                'vice_card_no',
+                'valid_from',
+                'valid_until',
                 'name',
                 'sync_name',
                 'status',
                 'sync_enabled',
                 'sync_validation_errors',
                 'last_sync_validated_at',
+                'last_synced_payload_hash',
                 'raw_payload',
                 'updated_at',
             ]
         );
 
-        $this->refreshDeviceSafeDataset(
-            Employee::query()->whereIn('employee_id', $rows->pluck('employee_id')->all())->get()
-        );
+        $persistedEmployees = Employee::query()
+            ->whereIn('employee_id', $rows->pluck('employee_id')->all())
+            ->get();
+
+        $this->backfillBiometricEmployeeLinks($persistedEmployees);
+        $this->refreshDeviceSafeDataset($persistedEmployees);
 
         return [
             'count' => $rows->count(),
@@ -259,7 +282,7 @@ class UserSyncService
             'version' => $this->deviceSyncRepository->nextVersionForDevice($device->id, DeviceSync::TYPE_USERS),
             'dataset_hash' => $datasetHash,
             'status' => DeviceSync::STATUS_QUEUED,
-            'total_records' => $dataset->count(),
+            'total_records' => $dataset->sum(static fn (SyncableEmployeeData $employee): int => 1 + count($employee->biometrics)),
             'sync_metadata' => [
                 'trigger' => $trigger,
                 'snapshot' => $snapshot,
@@ -397,44 +420,62 @@ class UserSyncService
                 'payload_hash' => $entry['payload_hash'],
             ], JSON_THROW_ON_ERROR));
 
-            $command = $this->commandService->queueCommand(
-                $sync->device_id,
+            $this->queueBatchCommand(
+                $sync,
                 'SYNC_EMPLOYEES',
                 [
                     'employee_code' => $entry['employee_id'],
                     'pin' => $entry['sync_uid'],
                     'name' => $entry['sync_name'],
                     'card_no' => $entry['card_no'],
-                    'privilege' => 0,
+                    'password' => $entry['device_password'],
+                    'privilege' => $entry['device_privilege'],
+                    'group_code' => $entry['group_code'],
+                    'timezone_code' => $entry['timezone_code'],
+                    'verification_mode' => $entry['verification_mode'],
+                    'vice_card_no' => $entry['vice_card_no'],
+                    'valid_from' => $entry['valid_from'],
+                    'valid_until' => $entry['valid_until'],
                 ],
-                'Queued by device sync batch',
-                [
-                    'device_sync_id' => $sync->id,
-                    'employee_id' => $entry['employee_record_id'],
-                    'fingerprint' => $fingerprint,
-                ]
+                $entry['employee_record_id'],
+                $fingerprint,
+                $queuedRecords,
+                $processedRecords,
+                $successfulRecords,
+                $skippedFingerprints,
             );
 
-            if ($command->wasRecentlyCreated) {
-                $queuedRecords++;
+            foreach ($entry['biometrics'] ?? [] as $biometric) {
+                $biometricFingerprint = sha1(json_encode([
+                    'device_id' => $sync->device_id,
+                    'employee_id' => $entry['employee_id'],
+                    'sync_uid' => $entry['sync_uid'],
+                    'biometric_type' => $biometric['biometric_type'] ?? null,
+                    'template_index' => $biometric['template_index'] ?? null,
+                    'file_name' => $biometric['file_name'] ?? null,
+                    'template_hash' => sha1((string) ($biometric['template_data'] ?? '')),
+                ], JSON_THROW_ON_ERROR));
 
-                continue;
-            }
-
-            if ($command->status === \App\Models\DeviceCommand::STATUS_DONE) {
-                $processedRecords++;
-                $successfulRecords++;
-                $skippedFingerprints[] = $fingerprint;
-            } elseif (in_array($command->status, [\App\Models\DeviceCommand::STATUS_PENDING, \App\Models\DeviceCommand::STATUS_SENT], true)) {
-                if ((int) $command->device_sync_id === $sync->id) {
-                    $queuedRecords++;
-
-                    continue;
-                }
-
-                $processedRecords++;
-                $successfulRecords++;
-                $skippedFingerprints[] = $fingerprint;
+                $this->queueBatchCommand(
+                    $sync,
+                    'SYNC_BIOMETRICS',
+                    [
+                        'employee_code' => $entry['employee_id'],
+                        'pin' => $entry['sync_uid'],
+                        'biometric_type' => $biometric['biometric_type'] ?? null,
+                        'template_index' => $biometric['template_index'] ?? null,
+                        'file_name' => $biometric['file_name'] ?? null,
+                        'data_size' => $biometric['data_size'] ?? null,
+                        'is_valid' => $biometric['is_valid'] ?? null,
+                        'template_data' => $biometric['template_data'] ?? null,
+                    ],
+                    $entry['employee_record_id'],
+                    $biometricFingerprint,
+                    $queuedRecords,
+                    $processedRecords,
+                    $successfulRecords,
+                    $skippedFingerprints,
+                );
             }
         }
 
@@ -462,16 +503,43 @@ class UserSyncService
     public function deviceSafeDataset(): Collection
     {
         return Employee::query()
+            ->with([
+                'biometrics' => function ($query): void {
+                    $query->orderBy('biometric_type')
+                        ->orderBy('template_index')
+                        ->orderBy('file_name')
+                        ->orderBy('id');
+                },
+            ])
             ->syncSafe()
             ->where('status', 'active')
             ->orderBy('employee_id')
             ->get()
             ->map(function (Employee $employee): SyncableEmployeeData {
+                $credentialAttributes = $this->resolveCredentialAttributesFromEmployee($employee);
+                $biometrics = $this->buildBiometricSyncEntries($employee);
+
                 $payloadHash = sha1(json_encode([
                     'employee_id' => $employee->employee_id,
                     'sync_uid' => $employee->sync_uid,
                     'sync_name' => $employee->sync_name,
                     'card_no' => $employee->card_no,
+                    'device_password' => $credentialAttributes['device_password'],
+                    'device_privilege' => $credentialAttributes['device_privilege'],
+                    'group_code' => $credentialAttributes['group_code'],
+                    'timezone_code' => $credentialAttributes['timezone_code'],
+                    'verification_mode' => $credentialAttributes['verification_mode'],
+                    'vice_card_no' => $credentialAttributes['vice_card_no'],
+                    'valid_from' => $credentialAttributes['valid_from'],
+                    'valid_until' => $credentialAttributes['valid_until'],
+                    'biometrics' => array_map(static fn (array $biometric): array => [
+                        'biometric_type' => $biometric['biometric_type'],
+                        'template_index' => $biometric['template_index'],
+                        'file_name' => $biometric['file_name'],
+                        'data_size' => $biometric['data_size'],
+                        'is_valid' => $biometric['is_valid'],
+                        'template_hash' => sha1((string) ($biometric['template_data'] ?? '')),
+                    ], $biometrics),
                 ], JSON_THROW_ON_ERROR));
 
                 return new SyncableEmployeeData(
@@ -480,11 +548,159 @@ class UserSyncService
                     syncUid: $employee->sync_uid,
                     syncName: $employee->sync_name,
                     cardNo: $employee->card_no,
+                    devicePassword: $credentialAttributes['device_password'],
+                    devicePrivilege: $credentialAttributes['device_privilege'],
+                    groupCode: $credentialAttributes['group_code'],
+                    timezoneCode: $credentialAttributes['timezone_code'],
+                    verificationMode: $credentialAttributes['verification_mode'],
+                    viceCardNo: $credentialAttributes['vice_card_no'],
+                    validFrom: $credentialAttributes['valid_from'],
+                    validUntil: $credentialAttributes['valid_until'],
+                    biometrics: $biometrics,
                     department: $employee->department,
                     rawPayload: $employee->raw_payload ?? [],
                     payloadHash: $payloadHash,
                 );
             });
+    }
+
+    private function queueBatchCommand(
+        DeviceSync $sync,
+        string $commandName,
+        array $parameters,
+        int $employeeRecordId,
+        string $fingerprint,
+        int &$queuedRecords,
+        int &$processedRecords,
+        int &$successfulRecords,
+        array &$skippedFingerprints,
+    ): void {
+        $command = $this->commandService->queueCommand(
+            $sync->device_id,
+            $commandName,
+            $parameters,
+            'Queued by device sync batch',
+            [
+                'device_sync_id' => $sync->id,
+                'employee_id' => $employeeRecordId,
+                'fingerprint' => $fingerprint,
+            ]
+        );
+
+        if ($command->wasRecentlyCreated) {
+            $queuedRecords++;
+
+            return;
+        }
+
+        if ($command->status === \App\Models\DeviceCommand::STATUS_DONE) {
+            $processedRecords++;
+            $successfulRecords++;
+            $skippedFingerprints[] = $fingerprint;
+
+            return;
+        }
+
+        if (in_array($command->status, [\App\Models\DeviceCommand::STATUS_PENDING, \App\Models\DeviceCommand::STATUS_SENT], true)) {
+            if ((int) $command->device_sync_id === $sync->id) {
+                $queuedRecords++;
+
+                return;
+            }
+
+            $processedRecords++;
+            $successfulRecords++;
+            $skippedFingerprints[] = $fingerprint;
+        }
+    }
+
+    private function buildBiometricSyncEntries(Employee $employee): array
+    {
+        return $employee->biometrics
+            ->map(function (EmployeeBiometric $biometric) use ($employee): ?array {
+                $biometricType = strtolower(trim((string) $biometric->biometric_type));
+
+                if (! in_array($biometricType, [
+                    EmployeeBiometric::TYPE_FINGERPRINT,
+                    EmployeeBiometric::TYPE_FACE,
+                    EmployeeBiometric::TYPE_PHOTO,
+                ], true)) {
+                    return null;
+                }
+
+                $templateData = trim((string) ($biometric->template_data ?? ''));
+                if ($templateData === '') {
+                    return null;
+                }
+
+                $templateIndex = $this->sanitizeDeviceCode($biometric->template_index, 32);
+                $fileName = $this->sanitizeBiometricFileName($biometric->file_name);
+
+                if ($biometricType === EmployeeBiometric::TYPE_PHOTO && $fileName === null) {
+                    $fileName = "{$employee->employee_id}.jpg";
+                }
+
+                return [
+                    'biometric_type' => $biometricType,
+                    'template_index' => $templateIndex,
+                    'file_name' => $fileName,
+                    'data_size' => $biometric->data_size ?: strlen($templateData),
+                    'is_valid' => $biometric->is_valid,
+                    'template_data' => $templateData,
+                ];
+            })
+            ->filter()
+            ->unique(static fn (array $entry): string => sha1(json_encode([
+                'biometric_type' => $entry['biometric_type'],
+                'template_index' => $entry['template_index'],
+                'file_name' => $entry['file_name'],
+                'template_hash' => sha1((string) ($entry['template_data'] ?? '')),
+            ], JSON_THROW_ON_ERROR)))
+            ->sortBy(static fn (array $entry): string => implode('|', [
+                match ($entry['biometric_type']) {
+                    EmployeeBiometric::TYPE_FINGERPRINT => '0',
+                    EmployeeBiometric::TYPE_FACE => '1',
+                    EmployeeBiometric::TYPE_PHOTO => '2',
+                    default => '9',
+                },
+                $entry['template_index'] ?? '',
+                $entry['file_name'] ?? '',
+                sha1((string) ($entry['template_data'] ?? '')),
+            ]))
+            ->values()
+            ->all();
+    }
+
+    private function backfillBiometricEmployeeLinks(Collection $employees): int
+    {
+        $employeesByCode = $employees
+            ->filter(static fn (Employee $employee): bool => trim((string) $employee->employee_id) !== '')
+            ->keyBy(static fn (Employee $employee): string => (string) $employee->employee_id);
+
+        if ($employeesByCode->isEmpty()) {
+            return 0;
+        }
+
+        $updated = 0;
+
+        EmployeeBiometric::query()
+            ->whereIn('employee_code', $employeesByCode->keys()->all())
+            ->get()
+            ->each(function (EmployeeBiometric $biometric) use ($employeesByCode, &$updated): void {
+                $employee = $employeesByCode->get((string) $biometric->employee_code);
+
+                if (! $employee || (int) $biometric->employee_id === (int) $employee->id) {
+                    return;
+                }
+
+                $biometric->forceFill([
+                    'employee_id' => $employee->id,
+                ])->save();
+
+                $updated++;
+            });
+
+        return $updated;
     }
 
     private function normalizeNumericIdentifier(mixed $value): ?string
@@ -519,6 +735,105 @@ class UserSyncService
         $value = preg_replace('/[^A-Za-z0-9_-]/', '', $value);
 
         return $value !== '' ? substr($value, 0, 32) : null;
+    }
+
+    private function sanitizeCredentialAttributes(array $record): array
+    {
+        $rawPayload = is_array($record['raw'] ?? null) ? $record['raw'] : [];
+
+        return [
+            'device_password' => $this->sanitizeDevicePassword($record['password'] ?? $rawPayload['Passwd'] ?? $rawPayload['Password'] ?? null),
+            'device_privilege' => $this->normalizePrivilege($record['privilege'] ?? $rawPayload['Pri'] ?? $rawPayload['Privilege'] ?? null),
+            'group_code' => $this->sanitizeDeviceCode($record['group_code'] ?? $rawPayload['Grp'] ?? $rawPayload['Group'] ?? null, 32),
+            'timezone_code' => $this->sanitizeDeviceCode($record['timezone_code'] ?? $rawPayload['TZ'] ?? $rawPayload['Timezone'] ?? null, 32),
+            'verification_mode' => $this->sanitizeDeviceCode($record['verification_mode'] ?? $rawPayload['Verify'] ?? $rawPayload['VerifyType'] ?? null, 32),
+            'vice_card_no' => $this->sanitizeDeviceCode($record['vice_card_no'] ?? $rawPayload['ViceCard'] ?? $rawPayload['ViceCardNo'] ?? null, 64),
+            'valid_from' => $this->normalizeDeviceDateTimeValue($record['valid_from'] ?? $rawPayload['StartDatetime'] ?? $rawPayload['StartTime'] ?? null),
+            'valid_until' => $this->normalizeDeviceDateTimeValue($record['valid_until'] ?? $rawPayload['EndDatetime'] ?? $rawPayload['EndTime'] ?? null),
+        ];
+    }
+
+    private function sanitizeDevicePassword(mixed $value): ?string
+    {
+        $value = trim((string) $value);
+
+        if ($value === '' || $value === '0') {
+            return null;
+        }
+
+        $value = Str::ascii($value);
+        $value = preg_replace('/[^A-Za-z0-9._@#%*!$:-]/', '', $value);
+
+        return $value !== '' ? substr($value, 0, 64) : null;
+    }
+
+    private function sanitizeDeviceCode(mixed $value, int $maxLength = 32): ?string
+    {
+        $value = trim((string) $value);
+
+        if ($value === '' || $value === '0') {
+            return null;
+        }
+
+        $value = Str::ascii($value);
+        $value = preg_replace('/[^A-Za-z0-9._:-]/', '', $value);
+
+        return $value !== '' ? substr($value, 0, $maxLength) : null;
+    }
+
+    private function sanitizeBiometricFileName(mixed $value): ?string
+    {
+        $value = trim((string) $value);
+
+        if ($value === '') {
+            return null;
+        }
+
+        $value = Str::ascii($value);
+        $value = preg_replace('/[^A-Za-z0-9._-]/', '', $value);
+
+        return $value !== '' ? substr($value, 0, 255) : null;
+    }
+
+    private function normalizePrivilege(mixed $value): int
+    {
+        $value = trim((string) $value);
+
+        if ($value === '' || preg_match('/^-?[0-9]+$/', $value) !== 1) {
+            return 0;
+        }
+
+        return max(0, min((int) $value, 14));
+    }
+
+    private function normalizeDeviceDateTimeValue(mixed $value): ?string
+    {
+        if ($value instanceof \DateTimeInterface) {
+            return $value->format('Y-m-d H:i:s');
+        }
+
+        $value = trim((string) $value);
+
+        if ($value === '' || $value === '0') {
+            return null;
+        }
+
+        return $this->payloadParser->normalizeTimestamp($value)?->format('Y-m-d H:i:s');
+    }
+
+    private function resolveCredentialAttributesFromEmployee(Employee $employee): array
+    {
+        return $this->sanitizeCredentialAttributes([
+            'password' => $employee->device_password,
+            'privilege' => $employee->device_privilege,
+            'group_code' => $employee->group_code,
+            'timezone_code' => $employee->timezone_code,
+            'verification_mode' => $employee->verification_mode,
+            'vice_card_no' => $employee->vice_card_no,
+            'valid_from' => $employee->valid_from,
+            'valid_until' => $employee->valid_until,
+            'raw' => $employee->raw_payload ?? [],
+        ]);
     }
 
     private function isLegacyMalformedEmployee(Employee $employee): bool

@@ -4,8 +4,10 @@ namespace Tests\Feature;
 
 use App\Models\AttendanceLog;
 use App\Models\Device;
+use App\Models\DeviceCommand;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Carbon;
 use Tests\TestCase;
 
 class AdminDashboardRouteTest extends TestCase
@@ -155,5 +157,40 @@ class AdminDashboardRouteTest extends TestCase
             'status' => 'pending',
             'created_by' => null,
         ]);
+    }
+
+    public function test_update_time_command_uses_system_time_instead_of_app_timezone(): void
+    {
+        config()->set('app.timezone', 'UTC');
+        config()->set('zkteco.system_timezone', 'Asia/Dhaka');
+        Carbon::setTestNow(Carbon::parse('2026-04-17 12:00:00', 'UTC'));
+
+        $device = Device::query()->create([
+            'name' => 'Main Gate',
+            'sn' => 'ACME003',
+            'serial_number' => 'ACME003',
+            'status' => 'active',
+        ]);
+
+        $response = $this->from('/admin/dashboard')
+            ->post(route('admin.devices.command', $device), [
+                'command' => 'UPDATE_TIME',
+            ]);
+
+        $response->assertRedirect('/admin/dashboard');
+
+        $commands = DeviceCommand::query()
+            ->where('device_id', $device->id)
+            ->orderBy('id')
+            ->get();
+
+        $this->assertCount(2, $commands);
+        $this->assertSame('SET_TIMEZONE', $commands[0]->command);
+        $this->assertSame('TimeZone', $commands[0]->parameters['option']);
+        $this->assertSame('6', $commands[0]->parameters['value']);
+        $this->assertSame('UPDATE_TIME', $commands[1]->command);
+        $this->assertSame('2026-04-17 18:00:00', $commands[1]->parameters['timestamp']);
+        $this->assertSame('Asia/Dhaka', $commands[1]->parameters['timezone']);
+        $this->assertSame('6', $commands[1]->parameters['timezone_option']);
     }
 }

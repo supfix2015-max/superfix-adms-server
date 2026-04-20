@@ -10,7 +10,10 @@ use Illuminate\Support\Str;
 
 class DeviceService
 {
-    public function __construct(protected DeviceRepository $repository) {}
+    public function __construct(
+        protected DeviceRepository $repository,
+        protected SystemClockService $systemClockService,
+    ) {}
 
     public function registerDevice(array $data): Device
     {
@@ -95,8 +98,11 @@ class DeviceService
             'SYNC' => 'SYNC_EMPLOYEES',
             'PULL_USERS' => 'PULL_EMPLOYEES',
             'PULL_LOGS' => 'PULL_ATTENDANCE',
+            'ClearAdmin' => 'RM_ADMIN_PRIVILEGE',
             default => $command,
         };
+
+        $parameters = $this->normalizeCommandParameters($normalizedCommand, $parameters);
 
         $protocolCommand = ! in_array($normalizedCommand, DeviceCommand::KNOWN_COMMANDS, true)
             ? trim($normalizedCommand)
@@ -112,6 +118,30 @@ class DeviceService
             'status' => DeviceCommand::STATUS_PENDING,
             'created_by' => $this->resolveCreatedById(),
         ]);
+    }
+
+    public function queueTimeSync(int $deviceId, ?string $timestamp = null, ?string $notes = null): array
+    {
+        $timezoneCommand = $this->queueDeviceCommand(
+            $deviceId,
+            'SET_TIMEZONE',
+            [
+                'option' => 'TimeZone',
+                'value' => $this->systemClockService->deviceTimezoneOption(),
+            ],
+            $notes ?? 'Sync device timezone to server system timezone'
+        );
+
+        $timeCommand = $this->queueDeviceCommand(
+            $deviceId,
+            'UPDATE_TIME',
+            array_filter([
+                'timestamp' => $timestamp,
+            ], static fn ($value) => $value !== null && $value !== ''),
+            $notes ?? 'Sync device time to server system time'
+        );
+
+        return [$timezoneCommand, $timeCommand];
     }
 
     public function queuePullEmployees(int $deviceId, ?string $employeeCode = null, ?string $notes = null): DeviceCommand
@@ -250,5 +280,21 @@ class DeviceService
         return DB::table('users')->where('id', $userId)->exists()
             ? (int) $userId
             : null;
+    }
+
+    private function normalizeCommandParameters(string $command, array $parameters): array
+    {
+        if ($command === 'SET_TIMEZONE') {
+            $parameters['option'] = 'TimeZone';
+            $parameters['value'] = (string) ($parameters['value'] ?? $this->systemClockService->deviceTimezoneOption());
+        }
+
+        if (in_array($command, ['SET_TIME', 'UPDATE_TIME'], true)) {
+            $parameters['timestamp'] = $this->systemClockService->normalizeForDevice($parameters['timestamp'] ?? null);
+            $parameters['timezone'] = $this->systemClockService->timezoneName();
+            $parameters['timezone_option'] = $this->systemClockService->deviceTimezoneOption();
+        }
+
+        return $parameters;
     }
 }

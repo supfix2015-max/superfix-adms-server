@@ -6,6 +6,10 @@ use App\Models\DeviceCommand;
 
 class ZKTecoCommandFormatter
 {
+    public function __construct(
+        protected SystemClockService $systemClockService,
+    ) {}
+
     public function format(DeviceCommand $command): string
     {
         $payload = trim((string) ($command->command_payload ?? ''));
@@ -17,12 +21,17 @@ class ZKTecoCommandFormatter
             'RESTART', 'REBOOT' => "C:{$command->id}:REBOOT",
             'CLEAR_LOGS' => "C:{$command->id}:CLEAR LOG",
             'SET_TIME', 'UPDATE_TIME' => $this->formatTimeCommand($command),
+            'SET_TIMEZONE' => $this->formatOptionCommand($command),
             'ENABLE_ATTENDANCE' => "C:{$command->id}:SET OPTION Realtime=1",
             'DISABLE_ATTENDANCE' => "C:{$command->id}:SET OPTION Realtime=0",
             'SET_ATTENDANCE_MODE' => $this->formatOptionCommand($command),
             'SYNC_EMPLOYEES' => $this->formatUserCommand($command),
+            'SYNC_BIOMETRICS' => $this->formatBiometricCommand($command),
+            'ENROLL_FINGERPRINT' => $this->formatFingerprintEnrollmentCommand($command),
+            'ENROLL_FACE' => $this->formatFaceEnrollmentCommand($command),
             'PULL_EMPLOYEES' => $this->formatEmployeePullCommand($command),
             'PULL_ATTENDANCE' => $this->formatAttendancePullCommand($command),
+            'RM_ADMIN_PRIVILEGE' => "C:{$command->id}:ClearAdmin",
             default => $this->formatRawCommand($command),
         };
     }
@@ -35,7 +44,7 @@ class ZKTecoCommandFormatter
             return "C:{$command->id}:SET OPTION {$parameters['option']}={$parameters['value']}";
         }
 
-        $timestamp = $parameters['timestamp'] ?? now()->format('Y-m-d H:i:s');
+        $timestamp = $this->systemClockService->normalizeForDevice($parameters['timestamp'] ?? null);
 
         return "C:{$command->id}:SET OPTION DateTime={$timestamp}";
     }
@@ -64,8 +73,33 @@ class ZKTecoCommandFormatter
         $name = $this->sanitize((string) ($parameters['name'] ?? 'Unknown User'));
         $card = $this->sanitize((string) ($parameters['card_no'] ?? ''));
         $privilege = (int) ($parameters['privilege'] ?? 0);
+        $password = $this->sanitize((string) ($parameters['password'] ?? ''));
+        $fields = [
+            "PIN={$pin}",
+            "Name={$name}",
+            'Pri='.max(0, min($privilege, 14)),
+            "Passwd={$password}",
+            "Card={$card}",
+        ];
 
-        return "C:{$command->id}:DATA UPDATE USERINFO PIN={$pin}\tName={$name}\tPri={$privilege}\tCard={$card}";
+        $optionalFields = [
+            'Grp' => $parameters['group_code'] ?? null,
+            'TZ' => $parameters['timezone_code'] ?? null,
+            'Verify' => $parameters['verification_mode'] ?? null,
+            'ViceCard' => $parameters['vice_card_no'] ?? null,
+            'StartDatetime' => $parameters['valid_from'] ?? null,
+            'EndDatetime' => $parameters['valid_until'] ?? null,
+        ];
+
+        foreach ($optionalFields as $label => $value) {
+            if ($value === null || $value === '') {
+                continue;
+            }
+
+            $fields[] = "{$label}=".$this->sanitize((string) $value);
+        }
+
+        return "C:{$command->id}:DATA UPDATE USERINFO ".implode("\t", $fields);
     }
 
     private function formatEmployeePullCommand(DeviceCommand $command): string
@@ -99,6 +133,142 @@ class ZKTecoCommandFormatter
         return implode(' ', $parts);
     }
 
+    private function formatBiometricCommand(DeviceCommand $command): string
+    {
+        $parameters = $command->parameters ?? [];
+        $pin = $this->sanitize((string) ($parameters['pin'] ?? $parameters['employee_code'] ?? ''));
+        $biometricType = strtolower(trim((string) ($parameters['biometric_type'] ?? '')));
+
+        if ($pin === '') {
+            throw new \InvalidArgumentException('Biometric sync command requires a device PIN');
+        }
+
+        return match ($biometricType) {
+            'fingerprint' => $this->formatFingerprintCommand($command, $pin, $parameters),
+            'face' => $this->formatFaceCommand($command, $pin, $parameters),
+            'photo' => $this->formatPhotoCommand($command, $pin, $parameters),
+            default => throw new \InvalidArgumentException('Unsupported biometric sync command type'),
+        };
+    }
+
+    private function formatFingerprintCommand(DeviceCommand $command, string $pin, array $parameters): string
+    {
+        $fields = [
+            "PIN={$pin}",
+            'FID='.$this->sanitize((string) ($parameters['template_index'] ?? '0')),
+        ];
+
+        if (array_key_exists('data_size', $parameters) && $parameters['data_size'] !== null && $parameters['data_size'] !== '') {
+            $fields[] = 'Size='.(int) $parameters['data_size'];
+        }
+
+        if (array_key_exists('is_valid', $parameters) && $parameters['is_valid'] !== null && $parameters['is_valid'] !== '') {
+            $fields[] = 'Valid='.($parameters['is_valid'] ? '1' : '0');
+        }
+
+        $templateData = $this->sanitize((string) ($parameters['template_data'] ?? ''));
+        if ($templateData === '') {
+            throw new \InvalidArgumentException('Fingerprint sync command requires template data');
+        }
+
+        $fields[] = "TMP={$templateData}";
+
+        return "C:{$command->id}:DATA UPDATE FINGERTMP ".implode("\t", $fields);
+    }
+
+    private function formatFaceCommand(DeviceCommand $command, string $pin, array $parameters): string
+    {
+        $fields = [
+            "PIN={$pin}",
+            'FID='.$this->sanitize((string) ($parameters['template_index'] ?? '50')),
+        ];
+
+        if (array_key_exists('data_size', $parameters) && $parameters['data_size'] !== null && $parameters['data_size'] !== '') {
+            $fields[] = 'Size='.(int) $parameters['data_size'];
+        }
+
+        if (array_key_exists('is_valid', $parameters) && $parameters['is_valid'] !== null && $parameters['is_valid'] !== '') {
+            $fields[] = 'Valid='.($parameters['is_valid'] ? '1' : '0');
+        }
+
+        $templateData = $this->sanitize((string) ($parameters['template_data'] ?? ''));
+        if ($templateData === '') {
+            throw new \InvalidArgumentException('Face sync command requires template data');
+        }
+
+        $fields[] = "TMP={$templateData}";
+
+        return "C:{$command->id}:DATA UPDATE FACE ".implode("\t", $fields);
+    }
+
+    private function formatPhotoCommand(DeviceCommand $command, string $pin, array $parameters): string
+    {
+        $fileName = $this->sanitize((string) ($parameters['file_name'] ?? "{$pin}.jpg"));
+        $templateData = $this->sanitize((string) ($parameters['template_data'] ?? ''));
+
+        if ($templateData === '') {
+            throw new \InvalidArgumentException('Photo sync command requires template data');
+        }
+
+        $fields = [
+            "PIN={$pin}",
+            "FileName={$fileName}",
+        ];
+
+        if (array_key_exists('data_size', $parameters) && $parameters['data_size'] !== null && $parameters['data_size'] !== '') {
+            $fields[] = 'Size='.(int) $parameters['data_size'];
+        }
+
+        $fields[] = "Content={$templateData}";
+
+        return "C:{$command->id}:DATA UPDATE USERPIC ".implode("\t", $fields);
+    }
+
+    private function formatFingerprintEnrollmentCommand(DeviceCommand $command): string
+    {
+        $parameters = $command->parameters ?? [];
+        $pin = $this->sanitize((string) ($parameters['pin'] ?? $parameters['employee_code'] ?? ''));
+
+        if ($pin === '') {
+            throw new \InvalidArgumentException('Fingerprint enrollment command requires a device PIN');
+        }
+
+        $fingerIndex = max(0, min((int) ($parameters['fid'] ?? $parameters['template_index'] ?? 0), 9));
+        $retry = max(1, min((int) ($parameters['retry'] ?? 3), 15));
+        $overwrite = $this->normalizeBooleanParameter($parameters['overwrite'] ?? true) ? '1' : '0';
+
+        return "C:{$command->id}:ENROLL_FP PIN={$pin}\tFID={$fingerIndex}\tRETRY={$retry}\tOVERWRITE={$overwrite}";
+    }
+
+    private function formatFaceEnrollmentCommand(DeviceCommand $command): string
+    {
+        $parameters = $command->parameters ?? [];
+        $pin = $this->sanitize((string) ($parameters['pin'] ?? $parameters['employee_code'] ?? ''));
+
+        if ($pin === '') {
+            throw new \InvalidArgumentException('Face enrollment command requires a device PIN');
+        }
+
+        $retry = max(1, min((int) ($parameters['retry'] ?? 3), 15));
+        $overwrite = $this->normalizeBooleanParameter($parameters['overwrite'] ?? true) ? '1' : '0';
+        $faceType = max(0, min((int) ($parameters['type'] ?? config('zkteco.face_enrollment_type', 2)), 9));
+
+        $fields = [
+            "TYPE={$faceType}",
+            "PIN={$pin}",
+        ];
+
+        $cardNumber = $this->sanitize((string) ($parameters['card_no'] ?? ''));
+        if ($cardNumber !== '') {
+            $fields[] = "CardNo={$cardNumber}";
+        }
+
+        $fields[] = "RETRY={$retry}";
+        $fields[] = "OVERWRITE={$overwrite}";
+
+        return "C:{$command->id}:ENROLL_BIO ".implode("\t", $fields);
+    }
+
     private function formatRawCommand(DeviceCommand $command): string
     {
         $commandText = trim((string) $command->command);
@@ -109,5 +279,16 @@ class ZKTecoCommandFormatter
     private function sanitize(string $value): string
     {
         return str_replace(["\r", "\n", "\t"], ' ', trim($value));
+    }
+
+    private function normalizeBooleanParameter(mixed $value): bool
+    {
+        if (is_bool($value)) {
+            return $value;
+        }
+
+        $value = strtolower(trim((string) $value));
+
+        return ! in_array($value, ['0', 'false', 'off', 'no'], true);
     }
 }

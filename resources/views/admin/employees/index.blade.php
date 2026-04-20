@@ -19,7 +19,7 @@
     </div>
     <div class="col-md-4 text-end">
         <button type="button" class="btn btn-success" onclick="syncEmployees()">
-            <i class="bi bi-arrow-repeat"></i> Sync Employees
+            <i class="bi bi-arrow-repeat"></i> Sync Users + Biometrics
         </button>
         <a href="{{ route('admin.employees.create') }}" class="btn btn-success">
             <i class="bi bi-plus"></i> Add Employee
@@ -78,7 +78,7 @@
 @push('extra_js')
 <script>
 function syncEmployees() {
-    if (!confirm('Queue user sync for all active devices? This may take time.')) return;
+    if (!confirm('Queue user and biometric sync for all active devices? This may take time.')) return;
     
     fetch('{{ route("admin.user-syncs.store") }}', {
         method: 'POST',

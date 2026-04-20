@@ -7,11 +7,12 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Notifications\Notifiable;
 use Illuminate\Support\Str;
 
 class Employee extends Model
 {
-    use HasFactory, SoftDeletes;
+    use HasFactory, Notifiable, SoftDeletes;
 
     protected $fillable = [
         'employee_id',
@@ -19,6 +20,14 @@ class Employee extends Model
         'uid',
         'sync_uid',
         'card_no',
+        'device_password',
+        'device_privilege',
+        'group_code',
+        'timezone_code',
+        'verification_mode',
+        'vice_card_no',
+        'valid_from',
+        'valid_until',
         'name',
         'sync_name',
         'first_name',
@@ -42,6 +51,9 @@ class Employee extends Model
         'sync_enabled' => 'boolean',
         'sync_validation_errors' => 'array',
         'last_sync_validated_at' => 'datetime',
+        'device_privilege' => 'integer',
+        'valid_from' => 'datetime',
+        'valid_until' => 'datetime',
     ];
 
     protected $appends = ['full_name'];
@@ -98,6 +110,11 @@ class Employee extends Model
         return $this->hasMany(Attendance::class);
     }
 
+    public function biometrics(): HasMany
+    {
+        return $this->hasMany(EmployeeBiometric::class);
+    }
+
     public function scopeActive($query)
     {
         return $query->where('status', 'active');
@@ -119,5 +136,12 @@ class Employee extends Model
                 ->orWhere('uid', 'like', "%{$search}%")
                 ->orWhere('card_no', 'like', "%{$search}%");
         });
+    }
+
+    public function routeNotificationForMail(): ?string
+    {
+        $email = trim((string) $this->email);
+
+        return $email !== '' ? $email : null;
     }
 }

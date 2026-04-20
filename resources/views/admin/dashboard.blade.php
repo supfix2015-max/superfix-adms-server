@@ -57,7 +57,7 @@
                             <th>Status</th>
                             <th>Last Heartbeat</th>
                             <th>Pending Command</th>
-                            <th>Give Command</th>
+                            <th>Command</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -86,6 +86,7 @@
                                         <option value="">Select Command</option>
                                         <option value="REBOOT">Reboot</option>
                                         <option value="UPDATE_TIME">Sync Time</option>
+                                        <option value="ClearAdmin">Clear Admin</option>
                                         <option value="ENABLE_ATTENDANCE">Enable Realtime</option>
                                         <option value="CLEAR_LOGS">Clear Logs</option>
                                     </select>

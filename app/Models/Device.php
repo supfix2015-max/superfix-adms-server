@@ -66,6 +66,11 @@ class Device extends Model
         return $this->hasMany(Employee::class);
     }
 
+    public function employeeBiometrics(): HasMany
+    {
+        return $this->hasMany(EmployeeBiometric::class);
+    }
+
     public function commands(): HasMany
     {
         return $this->hasMany(DeviceCommand::class);

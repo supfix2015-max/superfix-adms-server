@@ -86,6 +86,9 @@
             <a href="{{ route('admin.employees.index') }}" class="nav-link {{ request()->routeIs('admin.employees.*') ? 'active' : '' }}">
                 <i class="bi bi-people"></i> Employees
             </a>
+            <a href="{{ route('admin.credentials.index') }}" class="nav-link {{ request()->routeIs('admin.credentials.*') ? 'active' : '' }}">
+                <i class="bi bi-credit-card-2-front"></i> Credentials
+            </a>
             <a href="{{ route('admin.attendance.index') }}" class="nav-link {{ request()->routeIs('admin.attendance.*') ? 'active' : '' }}">
                 <i class="bi bi-calendar-check"></i> Attendance
             </a>

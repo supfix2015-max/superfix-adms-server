@@ -37,6 +37,17 @@ class CommandController extends Controller
             'notes' => 'nullable|string|max:500',
         ]);
 
+        if (strtoupper($validated['command']) === 'UPDATE_TIME') {
+            [, $timeCommand] = $this->deviceService->queueTimeSync(
+                $validated['device_id'],
+                $validated['parameters']['timestamp'] ?? null,
+                $validated['notes'] ?? null
+            );
+
+            return redirect()->route('admin.commands.show', $timeCommand)
+                ->with('success', 'Timezone and system-time sync commands queued successfully');
+        }
+
         $command = $this->deviceService->queueDeviceCommand(
             $validated['device_id'],
             $validated['command'],

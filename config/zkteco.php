@@ -62,8 +62,9 @@ return [
     'command_max_retries' => (int) env('ZKTECO_COMMAND_MAX_RETRIES', 3),
     'auto_pull_employees_on_contact' => env('ZKTECO_AUTO_PULL_EMPLOYEES_ON_CONTACT', true),
     'auto_pull_employees_cooldown_minutes' => (int) env('ZKTECO_AUTO_PULL_EMPLOYEES_COOLDOWN_MINUTES', 15),
+    'system_timezone' => env('ZKTECO_SYSTEM_TIMEZONE'),
     'device_timezone' => env('ZKTECO_DEVICE_TIMEZONE', env('APP_TIMEZONE', 'UTC')),
-    'option_timezone' => env('ZKTECO_OPTION_TIMEZONE', '0'),
+    'option_timezone' => env('ZKTECO_OPTION_TIMEZONE'),
     'option_stamp' => (string) env('ZKTECO_OPTION_STAMP', '9999'),
     'option_op_stamp' => (string) env('ZKTECO_OPTION_OPSTAMP', '9999'),
     'option_error_delay' => (string) env('ZKTECO_OPTION_ERROR_DELAY', '60'),
@@ -73,9 +74,10 @@ return [
     'option_res_log_count' => (string) env('ZKTECO_OPTION_RES_LOG_COUNT', '50000'),
     'option_trans_times' => env('ZKTECO_OPTION_TRANS_TIMES', '00:00;14:05'),
     'option_trans_interval' => (string) env('ZKTECO_OPTION_TRANS_INTERVAL', '1'),
-    'option_trans_flag' => env('ZKTECO_OPTION_TRANS_FLAG', '1111000000'),
+    'option_trans_flag' => env('ZKTECO_OPTION_TRANS_FLAG', 'TransData AttLog OpLog AttPhoto EnrollUser ChgUser EnrollFP ChgFP FPImag FACE UserPic'),
     'option_realtime' => env('ZKTECO_OPTION_REALTIME', true),
     'option_encrypt' => env('ZKTECO_OPTION_ENCRYPT', false),
+    'face_enrollment_type' => (int) env('ZKTECO_FACE_ENROLLMENT_TYPE', 2),
 
     'webhook' => [
         'url' => env('ZKTECO_WEBHOOK_URL'),

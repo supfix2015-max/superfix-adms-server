@@ -3,16 +3,22 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Models\Device;
 use App\Models\Employee;
 use App\Repositories\EmployeeRepository;
+use App\Services\CommandService;
 use App\Services\EmployeeService;
+use App\Services\UserSyncService;
+use Illuminate\Support\Collection;
 use Illuminate\Http\Request;
 
 class EmployeeController extends Controller
 {
     public function __construct(
         protected EmployeeService $employeeService,
-        protected EmployeeRepository $employeeRepository
+        protected EmployeeRepository $employeeRepository,
+        protected UserSyncService $userSyncService,
+        protected CommandService $commandService,
     ) {}
 
     public function index(Request $request)
@@ -46,6 +52,17 @@ class EmployeeController extends Controller
     {
         $validated = $request->validate([
             'employee_id' => 'required|string|unique:employees',
+            'uid' => 'nullable|digits_between:1,32',
+            'card_no' => 'nullable|string|max:32',
+            'device_password' => 'nullable|string|max:64',
+            'device_privilege' => 'nullable|integer|min:0|max:14',
+            'group_code' => 'nullable|string|max:32',
+            'timezone_code' => 'nullable|string|max:32',
+            'verification_mode' => 'nullable|string|max:32',
+            'vice_card_no' => 'nullable|string|max:64',
+            'valid_from' => 'nullable|date',
+            'valid_until' => 'nullable|date|after_or_equal:valid_from',
+            'status' => 'nullable|in:active,inactive,suspended',
             'first_name' => 'required|string|max:255',
             'last_name' => 'required|string|max:255',
             'email' => 'nullable|email|unique:employees',
@@ -56,7 +73,8 @@ class EmployeeController extends Controller
         ]);
 
         try {
-            $employee = $this->employeeService->createEmployee($validated);
+            $employee = $this->employeeService->createEmployee($this->prepareEmployeePayload($validated));
+            $this->refreshSyncSafety($employee);
 
             return redirect()->route('admin.employees.show', $employee)
                 ->with('success', 'Employee created successfully');
@@ -67,11 +85,103 @@ class EmployeeController extends Controller
 
     public function show(Employee $employee)
     {
-        $employee->load('attendances');
+        $employee->load([
+            'attendances',
+            'biometrics' => function ($query) {
+                $query->with('device')->latest()->limit(10);
+            },
+        ]);
+
+        $onlineDevices = Device::query()
+            ->online()
+            ->orderBy('name')
+            ->get();
 
         return view('admin.employees.show', [
             'employee' => $employee,
+            'onlineDevices' => $onlineDevices,
+            'enrollmentPin' => $this->resolveEnrollmentPin($employee),
         ]);
+    }
+
+    public function enrollBiometric(Request $request, Employee $employee)
+    {
+        $validated = $request->validate([
+            'device_id' => 'required|exists:devices,id',
+            'biometric_type' => 'required|in:fingerprint,face',
+            'finger_index' => 'nullable|integer|min:0|max:9',
+            'retry' => 'nullable|integer|min:1|max:15',
+            'overwrite' => 'nullable|boolean',
+        ]);
+
+        $device = Device::query()->findOrFail($validated['device_id']);
+
+        if (! $device->isOnline()) {
+            return back()->withErrors([
+                'enrollment' => "Device {$device->name} is not online. Remote biometric enrollment requires an actively polling device.",
+            ]);
+        }
+
+        $pin = $this->resolveEnrollmentPin($employee);
+        if ($pin === null) {
+            return back()->withErrors([
+                'enrollment' => 'Employee must have a numeric device PIN/UID before remote biometric enrollment can be queued.',
+            ]);
+        }
+
+        $biometricType = $validated['biometric_type'];
+        $retry = (int) ($validated['retry'] ?? 3);
+        $overwrite = $request->boolean('overwrite', true);
+
+        [$commandName, $parameters] = match ($biometricType) {
+            'fingerprint' => [
+                'ENROLL_FINGERPRINT',
+                [
+                    'pin' => $pin,
+                    'fid' => (string) ($validated['finger_index'] ?? 0),
+                    'retry' => $retry,
+                    'overwrite' => $overwrite,
+                ],
+            ],
+            'face' => [
+                'ENROLL_FACE',
+                array_filter([
+                    'pin' => $pin,
+                    'card_no' => $employee->card_no,
+                    'retry' => $retry,
+                    'overwrite' => $overwrite,
+                ], static fn ($value) => $value !== null && $value !== ''),
+            ],
+        };
+
+        $command = $this->commandService->queueCommand(
+            $device->id,
+            $commandName,
+            $parameters,
+            sprintf(
+                'Remote %s enrollment for %s (%s)',
+                $biometricType,
+                $employee->full_name,
+                $employee->employee_id
+            ),
+            [
+                'employee_id' => $employee->id,
+                'force' => true,
+            ]
+        );
+
+        return redirect()
+            ->route('admin.employees.show', $employee)
+            ->with(
+                'success',
+                sprintf(
+                    '%s enrollment queued for %s on %s as command #%d. The device must stay online and complete the capture before the template is uploaded back to ADMS.',
+                    ucfirst($biometricType),
+                    $employee->full_name,
+                    $device->name,
+                    $command->id
+                )
+            );
     }
 
     public function edit(Employee $employee)
@@ -87,6 +197,16 @@ class EmployeeController extends Controller
     public function update(Request $request, Employee $employee)
     {
         $validated = $request->validate([
+            'uid' => 'nullable|digits_between:1,32',
+            'card_no' => 'nullable|string|max:32',
+            'device_password' => 'nullable|string|max:64',
+            'device_privilege' => 'nullable|integer|min:0|max:14',
+            'group_code' => 'nullable|string|max:32',
+            'timezone_code' => 'nullable|string|max:32',
+            'verification_mode' => 'nullable|string|max:32',
+            'vice_card_no' => 'nullable|string|max:64',
+            'valid_from' => 'nullable|date',
+            'valid_until' => 'nullable|date|after_or_equal:valid_from',
             'first_name' => 'required|string|max:255',
             'last_name' => 'required|string|max:255',
             'email' => 'nullable|email',
@@ -97,7 +217,9 @@ class EmployeeController extends Controller
             'notes' => 'nullable|string',
         ]);
 
-        $this->employeeService->updateEmployee($employee->id, $validated);
+        $this->employeeService->updateEmployee($employee->id, $this->prepareEmployeePayload($validated));
+        $employee->refresh();
+        $this->refreshSyncSafety($employee);
 
         return redirect()->route('admin.employees.show', $employee)
             ->with('success', 'Employee updated successfully');
@@ -109,5 +231,53 @@ class EmployeeController extends Controller
 
         return redirect()->route('admin.employees.index')
             ->with('success', 'Employee deleted successfully');
+    }
+
+    private function prepareEmployeePayload(array $validated): array
+    {
+        $validated['uid'] = isset($validated['uid'])
+            ? preg_replace('/[^0-9]/', '', (string) $validated['uid'])
+            : null;
+        $validated['sync_uid'] = $validated['uid'] !== '' ? $validated['uid'] : null;
+        $validated['card_no'] = $this->normalizeOptionalString($validated['card_no'] ?? null);
+        $validated['device_password'] = $this->normalizeOptionalString($validated['device_password'] ?? null);
+        $validated['group_code'] = $this->normalizeOptionalString($validated['group_code'] ?? null);
+        $validated['timezone_code'] = $this->normalizeOptionalString($validated['timezone_code'] ?? null);
+        $validated['verification_mode'] = $this->normalizeOptionalString($validated['verification_mode'] ?? null);
+        $validated['vice_card_no'] = $this->normalizeOptionalString($validated['vice_card_no'] ?? null);
+        $validated['status'] = $validated['status'] ?? 'active';
+
+        return $validated;
+    }
+
+    private function refreshSyncSafety(Employee $employee): void
+    {
+        $this->userSyncService->refreshDeviceSafeDataset(new Collection([$employee->fresh()]));
+    }
+
+    private function normalizeOptionalString(?string $value): ?string
+    {
+        $value = trim((string) $value);
+
+        return $value !== '' ? $value : null;
+    }
+
+    private function resolveEnrollmentPin(Employee $employee): ?string
+    {
+        $candidates = [
+            $employee->sync_uid,
+            $employee->uid,
+            $employee->employee_id,
+        ];
+
+        foreach ($candidates as $candidate) {
+            $candidate = preg_replace('/[^0-9]/', '', trim((string) $candidate));
+
+            if ($candidate !== '') {
+                return substr($candidate, 0, 32);
+            }
+        }
+
+        return null;
     }
 }

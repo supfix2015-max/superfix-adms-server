@@ -66,12 +66,12 @@ class UserSyncController extends Controller
 
         $message = $result['summary']['new_batch_count'] > 0
             ? sprintf(
-                'Queued %d user sync batch(es) for %d active device(s).',
+                'Queued %d user and biometric sync batch(es) for %d active device(s).',
                 $result['summary']['new_batch_count'],
                 $result['summary']['active_device_count'],
             )
             : sprintf(
-                'User sync was already queued for %d active device(s).',
+                'User and biometric sync was already queued for %d active device(s).',
                 $result['summary']['active_device_count'],
             );
 
