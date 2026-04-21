@@ -2,6 +2,7 @@
 
 @section('title', "Employee: {$employee->full_name}")
 @section('page_title', $employee->full_name)
+@section('page_subtitle', 'Review employee identity, enrollment readiness, stored biometrics, attendance activity, and replay audit history from one profile.')
 
 @php
     $statusClass = match ($employee->status) {

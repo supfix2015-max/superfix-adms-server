@@ -1,134 +1,129 @@
 <!DOCTYPE html>
 <html lang="en">
-
+@php
+    $isAuthPage = request()->routeIs('login', 'register', 'password.*', 'verification.*', 'admin-password.*');
+@endphp
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Adms Logs</title>
+    <title>@yield('title', 'ADMS')</title>
     <meta name="csrf-token" content="{{ csrf_token() }}">
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/twitter-bootstrap/5.0.1/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="preconnect" href="https://fonts.bunny.net">
+    <link href="https://fonts.bunny.net/css?family=plus-jakarta-sans:400,500,600,700,800|instrument-sans:400,500,600,700" rel="stylesheet" />
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
     <link href="https://cdn.datatables.net/1.11.4/css/dataTables.bootstrap5.min.css" rel="stylesheet">
     <link href="https://cdn.datatables.net/buttons/2.2.2/css/buttons.bootstrap5.min.css" rel="stylesheet">
-
-    <style>
-        @media (max-width: 991.98px) {
-            .navbar-collapse {
-                position: fixed;
-                top: 56px;
-                left: -100%;
-                padding-left: 15px;
-                padding-right: 15px;
-                padding-bottom: 15px;
-                width: 75%;
-                height: 100%;
-                background-color: #f8f9fa;
-                transition: all 0.3s ease-in-out;
-                z-index: 1000;
-            }
-
-            .navbar-collapse.show {
-                left: 0;
-            }
-
-            body.menu-open {
-                overflow: hidden;
-            }
-
-            .navbar-toggler {
-                z-index: 1001;
-            }
-        }
-
-        ul.pagination {
-            margin-bottom: 30px !important;
-        }
-
-        .body-container {
-            flex: 1;
-        }
-    </style>
+    <link rel="stylesheet" href="{{ asset('enterprise-ui.css') }}">
+    @yield('extra_css')
+    @stack('extra_css')
 </head>
-
 <body>
-    <nav class="navbar navbar-expand-lg navbar-light bg-light">
-        <div class="container align-items-stretch">
-            <a class="navbar-brand" href="{{ route('admin.attendance.index') }}">
-                <img src="/logo.svg" alt="">
-            </a>
-            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav"
-                aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
-                <span class="navbar-toggler-icon"></span>
-            </button>
-            @if (Auth::check())
-                <div class="collapse navbar-collapse" id="navbarNav">
-                    <ul class="navbar-nav">
-                        <li class="nav-item">
-                            <a class="nav-link" href="{{ route('admin.attendance.index') }}">Attendance</a>
-                        </li>
-                        <!-- if is_admin is true then show this link -->
-                        @if (Auth::user()->isAdmin())
-                            <li class="nav-item">
-                                <a class="nav-link" href="{{ route('admin.devices.index') }}">Devices</a>
-                            </li>
-                            <li class="nav-item">
-                                <a class="nav-link" href="{{ route('admin.employees.index') }}">Employees</a>
-                            </li>
-                        @endif                      
-                        <li class="nav-item">
-                            <a class="nav-link" href="{{ route('admin.dashboard') }}">Dashboard</a>
-                        </li>
-                    </ul>
+    @if (! $isAuthPage)
+        <div class="legacy-navbar">
+            <nav class="navbar navbar-expand-lg navbar-light">
+                <div class="container-fluid px-0">
+                    <a class="navbar-brand fw-bold" href="{{ route('admin.dashboard') }}">
+                        <i class="bi bi-fingerprint me-2 text-primary"></i>
+                        ADMS Enterprise
+                    </a>
+
+                    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#appNavbar">
+                        <span class="navbar-toggler-icon"></span>
+                    </button>
+
+                    <div class="collapse navbar-collapse" id="appNavbar">
+                        <ul class="navbar-nav me-auto">
+                            @auth
+                                <li class="nav-item">
+                                    <a class="nav-link {{ request()->routeIs('admin.dashboard') ? 'active' : '' }}" href="{{ route('admin.dashboard') }}">Dashboard</a>
+                                </li>
+                                <li class="nav-item">
+                                    <a class="nav-link {{ request()->routeIs('admin.attendance.*') ? 'active' : '' }}" href="{{ route('admin.attendance.index') }}">Attendance</a>
+                                </li>
+                                <li class="nav-item">
+                                    <a class="nav-link {{ request()->routeIs('admin.devices.*') ? 'active' : '' }}" href="{{ route('admin.devices.index') }}">Devices</a>
+                                </li>
+                                <li class="nav-item">
+                                    <a class="nav-link {{ request()->routeIs('admin.employees.*') ? 'active' : '' }}" href="{{ route('admin.employees.index') }}">Employees</a>
+                                </li>
+                                @if (Route::has('users.index'))
+                                    <li class="nav-item">
+                                        <a class="nav-link {{ request()->routeIs('users.*') ? 'active' : '' }}" href="{{ route('users.index') }}">Admins</a>
+                                    </li>
+                                @endif
+                            @endauth
+                        </ul>
+
+                        <ul class="navbar-nav ms-auto">
+                            @auth
+                                <li class="nav-item dropdown">
+                                    <a class="nav-link dropdown-toggle fw-semibold" href="#" role="button" data-bs-toggle="dropdown">
+                                        <i class="bi bi-person-circle me-1"></i>
+                                        {{ auth()->user()->name }}
+                                    </a>
+                                    <div class="dropdown-menu dropdown-menu-end border-0 shadow">
+                                        <a class="dropdown-item" href="{{ route('admin.dashboard') }}">Open Console</a>
+                                        <a class="dropdown-item" href="{{ route('logout') }}"
+                                            onclick="event.preventDefault(); document.getElementById('logout-form').submit();">
+                                            Logout
+                                        </a>
+                                        <form id="logout-form" action="{{ route('logout') }}" method="POST" class="d-none">
+                                            @csrf
+                                        </form>
+                                    </div>
+                                </li>
+                            @else
+                                <li class="nav-item">
+                                    <a class="nav-link fw-semibold" href="{{ route('login') }}">Login</a>
+                                </li>
+                                @if (Route::has('register'))
+                                    <li class="nav-item">
+                                        <a class="nav-link fw-semibold" href="{{ route('register') }}">Register</a>
+                                    </li>
+                                @endif
+                            @endauth
+                        </ul>
+                    </div>
                 </div>
-            @endif
-            <span class="navbar-text d-none d-lg-block">
-                <ul class="navbar-nav ms-auto">
-                    @if (Auth::check())
-                        <!-- Authentication Links -->
-                        <li class="nav-item dropdown">
-                            <a id="navbarDropdown" class="nav-link dropdown-toggle" href="#" role="button"
-                                data-bs-toggle="dropdown" aria-haspopup="true" aria-expanded="false" v-pre>
-                                {{Auth::user()->name}}
-                            </a>
-
-                            <div class="dropdown-menu dropdown-menu-end" aria-labelledby="navbarDropdown">
-                                <a class="dropdown-item" href="{{ route('logout') }}"
-                                    onclick="event.preventDefault();
-                                                                                                                                 document.getElementById('logout-form').submit();">
-                                    {{ __('Logout') }}
-                                </a>
-
-                                <form id="logout-form" action="{{ route('logout') }}" method="POST" class="d-none">
-                                    @csrf
-                                </form>
-                            </div>
-                        </li>
-                    @endif
-
-                </ul>
-            </span>
+            </nav>
         </div>
-    </nav>
+    @endif
 
-    <div class="container body-container mt-4">
+    <main class="{{ $isAuthPage ? 'auth-shell auth-stage' : 'app-frame' }}">
+        @if (session('success'))
+            <div class="alert alert-success alert-dismissible fade show mb-3" role="alert">
+                {{ session('success') }}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+        @endif
+
+        @if (session('failed'))
+            <div class="alert alert-danger alert-dismissible fade show mb-3" role="alert">
+                {{ session('failed') }}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+        @endif
+
+        @if ($errors->any() && ! $isAuthPage)
+            <div class="alert alert-danger alert-dismissible fade show mb-3" role="alert">
+                <strong class="d-block mb-1">Please review the highlighted issues.</strong>
+                <ul class="mb-0 ps-3">
+                    @foreach ($errors->all() as $error)
+                        <li>{{ $error }}</li>
+                    @endforeach
+                </ul>
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+        @endif
+
         @yield('content')
-        @yield('scripts')
-    </div>
-
-    <footer class="bg-body-tertiary text-center text-lg-start">
-        <!-- <div class="text-center p-3" style="background-color: rgba(0, 0, 0, 0.05);">
-            © {{ now()->year }}: Organization Name -
-            <span class="text-body">Current Hash: {{ \App\Helpers\GitHelper::getCommitHash() }}</span>
-        </div> -->
-    </footer>
+    </main>
 
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery-validate/1.19.0/jquery.validate.js"></script>
     <script src="https://cdn.datatables.net/1.11.4/js/jquery.dataTables.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/js/bootstrap.bundle.min.js"
-        integrity="sha384-MrcW6ZMFYlzcLA8Nl+NtUVF0sA7MsXsP1UyJoMp4YLEuNSfAP+JcXn/tWtIaxVXM"
-        crossorigin="anonymous"></script>
     <script src="https://cdn.datatables.net/1.11.4/js/dataTables.bootstrap5.min.js"></script>
-
     <script src="https://cdn.datatables.net/buttons/2.2.2/js/dataTables.buttons.min.js"></script>
     <script src="https://cdn.datatables.net/buttons/2.2.2/js/buttons.bootstrap5.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.1.3/jszip.min.js"></script>
@@ -137,22 +132,9 @@
     <script src="https://cdn.datatables.net/buttons/2.2.2/js/buttons.html5.min.js"></script>
     <script src="https://cdn.datatables.net/buttons/2.2.2/js/buttons.print.min.js"></script>
     <script src="https://cdn.datatables.net/buttons/2.2.2/js/buttons.colVis.min.js"></script>
-
-
-    <script>
-        $(document).ready(function () {
-            $('.navbar-toggler').on('click', function () {
-                $('body').toggleClass('menu-open');
-            });
-
-            $('.nav-link').on('click', function () {
-                if ($(window).width() < 992) {
-                    $('.navbar-collapse').removeClass('show');
-                    $('body').removeClass('menu-open');
-                }
-            });
-        });
-    </script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    @yield('scripts')
+    @yield('extra_js')
+    @stack('extra_js')
 </body>
-
 </html>

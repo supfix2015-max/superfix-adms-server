@@ -2,6 +2,7 @@
 
 @section('title', 'Credentials')
 @section('page_title', 'Credential Management')
+@section('page_subtitle', 'Manage cards, passcodes, common codes, and online biometric enrollment from a single access-control workspace.')
 
 @section('content')
 @if($error)

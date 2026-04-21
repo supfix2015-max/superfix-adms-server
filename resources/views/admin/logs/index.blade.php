@@ -1,238 +1,267 @@
 @extends('admin.layout')
 
 @section('title', 'System Logs')
-@section('page_title', 'Logs & Raw Data')
+@section('page_title', 'Logs And Raw Data')
+@section('page_subtitle', 'Review inbound ADMS payloads, unresolved errors, and device command activity from a single diagnostic workspace.')
+
+@section('page_actions')
+    <a href="{{ route('admin.commands.create') }}" class="btn btn-success">
+        <i class="bi bi-terminal-plus me-1"></i>
+        Send Command
+    </a>
+@endsection
+
 @section('content')
-
-<div class="row g-4 mb-4">
-    <div class="col-md-6">
-        <div class="card">
-            <div class="card-header d-flex justify-content-between align-items-center">
-                <h6 class="mb-0">Raw Logs</h6>
-                <a href="#raw-logs-tab" class="btn btn-sm btn-outline-primary">View All</a>
-            </div>
+    <div class="metric-grid">
+        <div class="card metric-card">
             <div class="card-body">
-                <div class="row text-center g-3">
-                    <div class="col-6">
-                        <div class="h5 mb-0">{{ $rawStats['today'] ?? 0 }}</div>
-                        <small class="text-muted">Today</small>
-                    </div>
-                    <div class="col-6">
-                        <div class="h5 mb-0 text-warning">{{ $rawStats['pending'] ?? 0 }}</div>
-                        <small class="text-muted">Pending</small>
-                    </div>
+                <div class="metric-eyebrow">Raw Logs Today</div>
+                <div class="metric-value">{{ $rawStats['today'] ?? 0 }}</div>
+                <div class="metric-note positive">
+                    <i class="bi bi-cloud-arrow-down"></i>
+                    inbound payloads
                 </div>
             </div>
         </div>
-    </div>
-    <div class="col-md-6">
-        <div class="card">
-            <div class="card-header d-flex justify-content-between align-items-center">
-                <h6 class="mb-0">Error Logs</h6>
-                <a href="#error-logs-tab" class="btn btn-sm btn-outline-danger">View All</a>
-            </div>
+        <div class="card metric-card">
             <div class="card-body">
-                <div class="row text-center g-3">
-                    <div class="col-6">
-                        <div class="h5 mb-0 text-danger">{{ $errorStats['today'] ?? 0 }}</div>
-                        <small class="text-muted">Today</small>
+                <div class="metric-eyebrow">Pending Raw Logs</div>
+                <div class="metric-value">{{ $rawStats['pending'] ?? 0 }}</div>
+                <div class="metric-note {{ ($rawStats['pending'] ?? 0) > 0 ? 'negative' : 'positive' }}">
+                    <i class="bi bi-hourglass-split"></i>
+                    waiting for processing
+                </div>
+            </div>
+        </div>
+        <div class="card metric-card">
+            <div class="card-body">
+                <div class="metric-eyebrow">Errors Today</div>
+                <div class="metric-value">{{ $errorStats['today'] ?? 0 }}</div>
+                <div class="metric-note {{ ($errorStats['today'] ?? 0) > 0 ? 'negative' : 'positive' }}">
+                    <i class="bi bi-exclamation-octagon"></i>
+                    diagnostics raised
+                </div>
+            </div>
+        </div>
+        <div class="card metric-card">
+            <div class="card-body">
+                <div class="metric-eyebrow">Unresolved Errors</div>
+                <div class="metric-value">{{ $errorStats['unresolved'] ?? 0 }}</div>
+                <div class="metric-note {{ ($errorStats['unresolved'] ?? 0) > 0 ? 'negative' : 'positive' }}">
+                    <i class="bi bi-life-preserver"></i>
+                    require attention
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <ul class="nav nav-tabs" id="logsTabs" role="tablist">
+        <li class="nav-item" role="presentation">
+            <button class="nav-link active" id="raw-logs-tab" data-bs-toggle="tab" data-bs-target="#raw-logs" type="button" role="tab" aria-controls="raw-logs" aria-selected="true">Raw Logs</button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="error-logs-tab" data-bs-toggle="tab" data-bs-target="#error-logs" type="button" role="tab" aria-controls="error-logs" aria-selected="false">Error Logs</button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="commands-tab" data-bs-toggle="tab" data-bs-target="#commands" type="button" role="tab" aria-controls="commands" aria-selected="false">Device Commands</button>
+        </li>
+    </ul>
+
+    <div class="tab-content">
+        <div class="tab-pane fade show active" id="raw-logs" role="tabpanel" aria-labelledby="raw-logs-tab">
+            <div class="card table-shell">
+                <div class="card-header">
+                    <div>
+                        <h5 class="shell-title">Raw Device Requests</h5>
+                        <div class="shell-subtitle">Payloads received from devices before they are normalized into attendance, biometric, or sync records.</div>
                     </div>
-                    <div class="col-6">
-                        <div class="h5 mb-0">{{ $errorStats['unresolved'] ?? 0 }}</div>
-                        <small class="text-muted">Unresolved</small>
+                </div>
+                <div class="card-body p-0">
+                    <div class="table-responsive">
+                        <table class="table table-hover mb-0">
+                            <thead>
+                                <tr>
+                                    <th>Device</th>
+                                    <th>Endpoint</th>
+                                    <th>Status</th>
+                                    <th>Records</th>
+                                    <th>Received</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @forelse($rawLogs ?? [] as $log)
+                                    <tr class="{{ $log->processing_status === 'failed' ? 'table-danger' : ($log->processing_status === 'processing' ? 'table-warning' : '') }}">
+                                        <td>{{ $log->device?->name ?? 'Unknown Device' }}</td>
+                                        <td><code>{{ $log->endpoint }}</code></td>
+                                        <td>
+                                            <span class="badge bg-{{ $log->processing_status === 'processed' ? 'success' : ($log->processing_status === 'failed' ? 'danger' : 'warning') }}">
+                                                {{ ucfirst($log->processing_status) }}
+                                            </span>
+                                        </td>
+                                        <td>{{ $log->record_count }}</td>
+                                        <td>{{ $log->created_at->diffForHumans() }}</td>
+                                        <td>
+                                            <button type="button" class="btn btn-sm btn-outline-primary" onclick="viewRawLog({{ $log->id }})">
+                                                <i class="bi bi-eye me-1"></i>
+                                                Inspect
+                                            </button>
+                                        </td>
+                                    </tr>
+                                @empty
+                                    <tr>
+                                        <td colspan="6">
+                                            <div class="empty-state">
+                                                <i class="bi bi-database-slash"></i>
+                                                <div class="fw-semibold">No raw logs found</div>
+                                                <div class="small">This section populates when devices post ADMS payloads to the server.</div>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                @endforelse
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="tab-pane fade" id="error-logs" role="tabpanel" aria-labelledby="error-logs-tab">
+            <div class="card table-shell">
+                <div class="card-header">
+                    <div>
+                        <h5 class="shell-title">Error Diagnostics</h5>
+                        <div class="shell-subtitle">Exceptions and warnings captured during device ingest, parsing, and command processing.</div>
+                    </div>
+                </div>
+                <div class="card-body p-0">
+                    <div class="table-responsive">
+                        <table class="table table-hover mb-0">
+                            <thead>
+                                <tr>
+                                    <th>Device</th>
+                                    <th>Type</th>
+                                    <th>Severity</th>
+                                    <th>Message</th>
+                                    <th>Time</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @forelse($errorLogs ?? [] as $error)
+                                    <tr class="table-{{ $error->severity === 'critical' ? 'danger' : ($error->severity === 'warning' ? 'warning' : 'secondary') }}">
+                                        <td>{{ $error->device?->name ?? 'System' }}</td>
+                                        <td><code>{{ $error->type }}</code></td>
+                                        <td><span class="badge bg-{{ $error->severity }}">{{ ucfirst($error->severity) }}</span></td>
+                                        <td>{{ \Illuminate\Support\Str::limit($error->message, 90) }}</td>
+                                        <td>{{ $error->created_at->diffForHumans() }}</td>
+                                        <td>
+                                            <span class="badge bg-{{ $error->resolved ? 'success' : 'warning' }}">
+                                                {{ $error->resolved ? 'Resolved' : 'Unresolved' }}
+                                            </span>
+                                        </td>
+                                    </tr>
+                                @empty
+                                    <tr>
+                                        <td colspan="6">
+                                            <div class="empty-state">
+                                                <i class="bi bi-patch-check"></i>
+                                                <div class="fw-semibold">No errors found</div>
+                                                <div class="small">The diagnostics queue is currently clear.</div>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                @endforelse
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="tab-pane fade" id="commands" role="tabpanel" aria-labelledby="commands-tab">
+            <div class="card table-shell">
+                <div class="card-header">
+                    <div>
+                        <h5 class="shell-title">Recent Device Commands</h5>
+                        <div class="shell-subtitle">Queue and completion history for device-side control operations.</div>
+                    </div>
+                    <a href="{{ route('admin.commands.create') }}" class="btn btn-outline-primary btn-sm">Send Command</a>
+                </div>
+                <div class="card-body p-0">
+                    <div class="table-responsive">
+                        <table class="table table-hover mb-0">
+                            <thead>
+                                <tr>
+                                    <th>Device</th>
+                                    <th>Command</th>
+                                    <th>Status</th>
+                                    <th>Sent</th>
+                                    <th>Executed</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @forelse($commands ?? [] as $command)
+                                    <tr>
+                                        <td>{{ $command->device?->name ?? 'Unknown Device' }}</td>
+                                        <td><code>{{ $command->command }}</code></td>
+                                        <td>
+                                            <span class="badge bg-{{ $command->status === 'pending' ? 'warning' : ($command->status === 'done' ? 'success' : 'danger') }}">
+                                                {{ ucfirst($command->status) }}
+                                            </span>
+                                        </td>
+                                        <td>{{ $command->created_at->diffForHumans() }}</td>
+                                        <td>{{ $command->executed_at?->diffForHumans() ?? '-' }}</td>
+                                    </tr>
+                                @empty
+                                    <tr>
+                                        <td colspan="5">
+                                            <div class="empty-state">
+                                                <i class="bi bi-terminal-x"></i>
+                                                <div class="fw-semibold">No commands queued</div>
+                                                <div class="small">Create a command to start building device-side operation history.</div>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                @endforelse
+                            </tbody>
+                        </table>
                     </div>
                 </div>
             </div>
         </div>
     </div>
-</div>
 
-<ul class="nav nav-tabs" id="logsTabs" role="tablist">
-    <li class="nav-item" role="presentation">
-        <button class="nav-link active" id="raw-logs-tab" data-bs-toggle="tab" data-bs-target="#raw-logs" type="button" role="tab">Raw Logs</button>
-    </li>
-    <li class="nav-item" role="presentation">
-        <button class="nav-link" id="error-logs-tab" data-bs-toggle="tab" data-bs-target="#error-logs" type="button" role="tab">Error Logs</button>
-    </li>
-    <li class="nav-item" role="presentation">
-        <button class="nav-link" id="commands-tab" data-bs-toggle="tab" data-bs-target="#commands" type="button" role="tab">Device Commands</button>
-    </li>
-</ul>
-
-<div class="tab-content mt-3">
-    {{-- Raw Logs --}}
-    <div class="tab-pane fade show active" id="raw-logs" role="tabpanel">
-        <div class="card">
-            <div class="card-body p-0">
-                <div class="table-responsive">
-                    <table class="table table-hover mb-0">
-                        <thead class="table-light">
-                            <tr>
-                                <th>Device</th>
-                                <th>Endpoint</th>
-                                <th>Status</th>
-                                <th>Records</th>
-                                <th>Received</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            @forelse($rawLogs ?? [] as $log)
-                                <tr class="{{ $log->processing_status === 'failed' ? 'table-danger' : ($log->processing_status === 'processing' ? 'table-warning' : '') }}">
-                                    <td>{{ $log->device?->name ?? 'Unknown Device' }}</td>
-                                    <td>
-                                        <code class="small">{{ $log->endpoint }}</code>
-                                    </td>
-                                    <td>
-                                        <span class="badge bg-{{ $log->processing_status === 'processed' ? 'success' : ($log->processing_status === 'failed' ? 'danger' : 'warning') }}">
-                                            {{ ucfirst($log->processing_status) }}
-                                        </span>
-                                    </td>
-                                    <td><strong>{{ $log->record_count }}</strong></td>
-                                    <td>
-                                        <small class="text-muted">{{ $log->created_at->diffForHumans() }}</small>
-                                    </td>
-                                    <td>
-                                        <a href="#" class="btn btn-sm btn-outline-primary" onclick="viewRawLog({{ $log->id }})">
-                                            <i class="bi bi-eye"></i>
-                                        </a>
-                                    </td>
-                                </tr>
-                            @empty
-                                <tr>
-                                    <td colspan="6" class="text-center py-4 text-muted">
-                                        No raw logs found
-                                    </td>
-                                </tr>
-                            @endforelse
-                        </tbody>
-                    </table>
+    <div class="modal fade" id="rawLogModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-xl modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Raw Payload</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <pre id="rawPayloadContent" class="bg-dark text-light p-3 rounded mb-0" style="font-size: 0.875rem; min-height: 16rem;"></pre>
                 </div>
             </div>
         </div>
     </div>
-
-    {{-- Error Logs --}}
-    <div class="tab-pane fade" id="error-logs" role="tabpanel">
-        <div class="card">
-            <div class="card-body p-0">
-                <div class="table-responsive">
-                    <table class="table table-hover mb-0">
-                        <thead class="table-light">
-                            <tr>
-                                <th>Device</th>
-                                <th>Type</th>
-                                <th>Severity</th>
-                                <th>Message</th>
-                                <th>Time</th>
-                                <th>Status</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            @forelse($errorLogs ?? [] as $error)
-                                <tr class="table-{{ $error->severity === 'critical' ? 'danger' : ($error->severity === 'warning' ? 'warning' : 'secondary') }}">
-                                    <td>{{ $error->device?->name ?? 'System' }}</td>
-                                    <td><code>{{ $error->type }}</code></td>
-                                    <td>
-                                        <span class="badge bg-{{ $error->severity }}">{{ ucfirst($error->severity) }}</span>
-                                    </td>
-                                    <td class="small">{{ Str::limit($error->message, 50) }}</td>
-                                    <td>
-                                        <small>{{ $error->created_at->diffForHumans() }}</small>
-                                    </td>
-                                    <td>
-                                        @if(!$error->resolved)
-                                            <span class="badge bg-warning">Unresolved</span>
-                                        @else
-                                            <span class="badge bg-success">Resolved</span>
-                                        @endif
-                                    </td>
-                                </tr>
-                            @empty
-                                <tr>
-                                    <td colspan="6" class="text-center py-4 text-muted">
-                                        No errors found
-                                    </td>
-                                </tr>
-                            @endforelse
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    {{-- Device Commands --}}
-    <div class="tab-pane fade" id="commands" role="tabpanel">
-        <div class="card">
-            <div class="card-header d-flex justify-content-between">
-                <h6 class="mb-0">Device Commands</h6>
-                <a href="{{ route('admin.commands.create') }}" class="btn btn-sm btn-success">Send Command</a>
-            </div>
-            <div class="card-body p-0">
-                <div class="table-responsive">
-                    <table class="table table-hover mb-0">
-                        <thead class="table-light">
-                            <tr>
-                                <th>Device</th>
-                                <th>Command</th>
-                                <th>Status</th>
-                                <th>Sent</th>
-                                <th>Executed</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            @forelse($commands ?? [] as $command)
-                                <tr>
-                                    <td>{{ $command->device?->name ?? 'Unknown Device' }}</td>
-                                    <td><code>{{ $command->command }}</code></td>
-                                    <td>
-                                        <span class="badge bg-{{ $command->status === 'pending' ? 'warning' : ($command->status === 'done' ? 'success' : 'danger') }}">
-                                            {{ ucfirst($command->status) }}
-                                        </span>
-                                    </td>
-                                    <td>{{ $command->created_at->diffForHumans() }}</td>
-                                    <td>{{ $command->executed_at?->diffForHumans() ?? '-' }}</td>
-                                </tr>
-                            @empty
-                                <tr>
-                                    <td colspan="5" class="text-center py-4 text-muted">No commands</td>
-                                </tr>
-                            @endforelse
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
-
-{{-- Raw Log Modal --}}
-<div class="modal fade" id="rawLogModal" tabindex="-1">
-    <div class="modal-dialog modal-xl">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title">Raw Payload</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-            </div>
-            <div class="modal-body">
-                <pre id="rawPayloadContent" class="bg-dark text-light p-3 rounded" style="font-size: 0.875rem; max-height: 500px; overflow-y: auto;"></pre>
-            </div>
-        </div>
-    </div>
-</div>
+@endsection
 
 @push('extra_js')
-<script>
-function viewRawLog(logId) {
-    fetch(`/admin/logs/{{ $log->id }}/raw`)  // TODO: Add route
-        .then(response => response.text())
-        .then(data => {
-            document.getElementById('rawPayloadContent').textContent = data;
-            new bootstrap.Modal(document.getElementById('rawLogModal')).show();
-        });
-}
-</script>
-@endpush
+    <script>
+        const rawLogUrlTemplate = @json(route('admin.logs.raw', ['id' => '__LOG_ID__']));
 
-@endsection
+        function viewRawLog(logId) {
+            fetch(rawLogUrlTemplate.replace('__LOG_ID__', logId))
+                .then((response) => response.text())
+                .then((data) => {
+                    document.getElementById('rawPayloadContent').textContent = data;
+                    new bootstrap.Modal(document.getElementById('rawLogModal')).show();
+                })
+                .catch(() => {
+                    document.getElementById('rawPayloadContent').textContent = 'Unable to load the raw payload for this request.';
+                    new bootstrap.Modal(document.getElementById('rawLogModal')).show();
+                });
+        }
+    </script>
+@endpush

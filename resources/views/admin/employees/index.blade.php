@@ -1,93 +1,129 @@
 @extends('admin.layout')
 
 @section('title', 'Employees')
-@section('page_title', 'Employee Management')
+@section('page_title', 'Employee Directory')
+@section('page_subtitle', 'Manage employee identities, sync status, credentials, and biometric replay from a single directory.')
+
+@section('page_actions')
+    <a href="{{ route('admin.employees.create') }}" class="btn btn-success">
+        <i class="bi bi-plus-lg me-1"></i>
+        Add Employee
+    </a>
+@endsection
 
 @section('content')
-    <div class="row mb-3">
-        <div class="col-md-6">
-            <form method="GET" class="d-flex gap-2">
-                <input type="text" name="search" class="form-control" placeholder="Search employees..."
-                    value="{{ $filters['search'] ?? '' }}">
-                <select name="status" class="form-select" style="max-width: 150px">
-                    <option value="">All Status</option>
-                    <option value="active" {{ ($filters['status'] ?? '') === 'active' ? 'selected' : '' }}>Active</option>
-                    <option value="inactive" {{ ($filters['status'] ?? '') === 'inactive' ? 'selected' : '' }}>Inactive
-                    </option>
-                    <option value="suspended" {{ ($filters['status'] ?? '') === 'suspended' ? 'selected' : '' }}>Suspended
-                    </option>
-                </select>
-                <button type="submit" class="btn btn-primary">Filter</button>
+    <div class="card">
+        <div class="card-body">
+            <div class="page-toolbar">
+                <div>
+                    <h5 class="mb-1">Search And Filter</h5>
+                    <p class="small mb-0">Refine the directory by employee identifier, status, or operational segment.</p>
+                </div>
+                <div class="toolbar-cluster">
+                    <button type="button" class="btn btn-success" onclick="syncEmployees()">
+                        <i class="bi bi-arrow-repeat me-1"></i> Sync Employees
+                    </button>
+                    <button type="button" class="btn btn-outline-success" onclick="syncFaceTemplates()">
+                        <i class="bi bi-person-bounding-box me-1"></i> Sync Face Templates
+                    </button>
+                    <button type="button" class="btn btn-outline-success" onclick="syncFingerTemplates()">
+                        <i class="bi bi-fingerprint me-1"></i> Sync Finger Templates
+                    </button>
+                </div>
+            </div>
+
+            <form method="GET" class="row g-3 mt-2">
+                <div class="col-lg-6">
+                    <input type="text" name="search" class="form-control" placeholder="Search employee ID, name, email, or card..." value="{{ $filters['search'] ?? '' }}">
+                </div>
+                <div class="col-sm-6 col-lg-3">
+                    <select name="status" class="form-select">
+                        <option value="">All Status</option>
+                        <option value="active" {{ ($filters['status'] ?? '') === 'active' ? 'selected' : '' }}>Active</option>
+                        <option value="inactive" {{ ($filters['status'] ?? '') === 'inactive' ? 'selected' : '' }}>Inactive</option>
+                        <option value="suspended" {{ ($filters['status'] ?? '') === 'suspended' ? 'selected' : '' }}>Suspended</option>
+                    </select>
+                </div>
+                <div class="col-sm-6 col-lg-3">
+                    <div class="toolbar-cluster">
+                        <button type="submit" class="btn btn-primary">Apply Filters</button>
+                        @if (request()->hasAny(['search', 'status']))
+                            <a href="{{ route('admin.employees.index') }}" class="btn btn-outline-secondary">Reset</a>
+                        @endif
+                    </div>
+                </div>
             </form>
         </div>
-        <div class="col-md-6 text-end">
-            <a href="{{ route('admin.employees.create') }}" class="btn btn-success">
-                <i class="bi bi-plus"></i> Add Employee
-            </a>
-            <button type="button" class="btn btn-success" onclick="syncEmployees()">
-                <i class="bi bi-arrow-repeat"></i> Sync Employees
-            </button>
-            <button type="button" class="btn btn-success" onclick="syncFaceTemplates()">
-                <i class="bi bi-arrow-repeat"></i> Sync Face Templates
-            </button>
-            <button type="button" class="btn btn-success" onclick="syncFingerTemplates()">
-                <i class="bi bi-arrow-repeat"></i> Sync Finger Templates
-            </button>
+    </div>
+
+    <div class="card table-shell">
+        <div class="card-header">
+            <div>
+                <h5 class="shell-title">Employee Records</h5>
+                <div class="shell-subtitle">{{ $employees->total() }} employees matched the current directory filters.</div>
+            </div>
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-hover mb-0">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Name</th>
+                            <th>Email</th>
+                            <th>Department</th>
+                            <th>Status</th>
+                            <th>Hire Date</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @forelse($employees as $employee)
+                            <tr>
+                                <td><code>{{ $employee->employee_id }}</code></td>
+                                <td>
+                                    <div class="fw-semibold">{{ $employee->full_name }}</div>
+                                    <div class="small">{{ $employee->phone ?? 'No phone number' }}</div>
+                                </td>
+                                <td>{{ $employee->email ?? '-' }}</td>
+                                <td>{{ $employee->department ?? '-' }}</td>
+                                <td>
+                                    <span class="badge bg-{{ $employee->status === 'active' ? 'success' : ($employee->status === 'inactive' ? 'secondary' : 'danger') }}">
+                                        {{ ucfirst($employee->status) }}
+                                    </span>
+                                </td>
+                                <td>{{ $employee->hire_date ? \Carbon\Carbon::parse($employee->hire_date)->format('Y-m-d') : '-' }}</td>
+                                <td>
+                                    <div class="toolbar-cluster">
+                                        <a href="{{ route('admin.employees.show', $employee) }}" class="btn btn-sm btn-outline-primary">View</a>
+                                        <a href="{{ route('admin.employees.edit', $employee) }}" class="btn btn-sm btn-outline-warning">Edit</a>
+                                        <form method="POST" action="{{ route('admin.employees.destroy', $employee) }}" class="d-inline" onsubmit="return confirm('Delete this employee?')">
+                                            @csrf
+                                            @method('DELETE')
+                                            <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+                                        </form>
+                                    </div>
+                                </td>
+                            </tr>
+                        @empty
+                            <tr>
+                                <td colspan="7">
+                                    <div class="empty-state">
+                                        <i class="bi bi-people"></i>
+                                        <div class="fw-semibold">No employees found</div>
+                                        <div class="small">Create an employee or relax the directory filters to see records here.</div>
+                                    </div>
+                                </td>
+                            </tr>
+                        @endforelse
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        <div class="card-footer">
+            {{ $employees->links('pagination::bootstrap-5') }}
         </div>
     </div>
-
-    <div class="card">
-        <table class="table table-hover mb-0">
-            <thead class="table-light">
-                <tr>
-                    <th>ID</th>
-                    <th>Name</th>
-                    <th>Email</th>
-                    <th>Department</th>
-                    <th>Status</th>
-                    <th>Hire Date</th>
-                    <th>Actions</th>
-                </tr>
-            </thead>
-            <tbody>
-                @forelse($employees as $employee)
-                    <tr>
-                        <td><code>{{ $employee->employee_id }}</code></td>
-                        <td>{{ $employee->full_name }}</td>
-                        <td>{{ $employee->email ?? '-' }}</td>
-                        <td>{{ $employee->department ?? '-' }}</td>
-                        <td>
-                            <span
-                                class="badge bg-{{ $employee->status === 'active' ? 'success' : ($employee->status === 'inactive' ? 'secondary' : 'danger') }}">
-                                {{ ucfirst($employee->status) }}
-                            </span>
-                        </td>
-                        <td>{{ $employee->hire_date ? \Carbon\Carbon::parse($employee->hire_date)->format('Y-m-d') : '-' }}
-                        </td>
-                        <td>
-                            <a href="{{ route('admin.employees.show', $employee) }}" class="btn btn-sm btn-info">View</a>
-                            <a href="{{ route('admin.employees.edit', $employee) }}"
-                                class="btn btn-sm btn-warning">Edit</a>
-                            <form method="POST" action="{{ route('admin.employees.destroy', $employee) }}"
-                                style="display: inline;">
-                                @csrf @method('DELETE')
-                                <button type="submit" class="btn btn-sm btn-danger"
-                                    onclick="return confirm('Are you sure?')">Delete</button>
-                            </form>
-                        </td>
-                    </tr>
-                @empty
-                    <tr>
-                        <td colspan="7" class="text-center text-muted">No employees found</td>
-                    </tr>
-                @endforelse
-            </tbody>
-        </table>
-    </div>
-
-    <nav class="mt-3">
-        {{ $employees->links('pagination::bootstrap-5') }}
-    </nav>
 
     @push('extra_js')
         <script>
@@ -113,9 +149,8 @@
                             alert(data.message);
                         }
                     })
-                    .catch(error => {
-                        console.error('Error:', error);
-                        alert('Sync failed. Check console.');
+                    .catch(() => {
+                        alert('Sync failed. Please review the browser console or server logs.');
                     });
             }
 
@@ -124,11 +159,11 @@
             }
 
             function syncFaceTemplates() {
-                queueSync('face', 'Queue face template sync for every employee who has a face template?');
+                queueSync('face', 'Queue face template sync for every employee who already has a face template?');
             }
 
             function syncFingerTemplates() {
-                queueSync('fingerprint', 'Queue fingerprint template sync for every employee who has a fingerprint template?');
+                queueSync('fingerprint', 'Queue fingerprint template sync for every employee who already has a fingerprint template?');
             }
         </script>
     @endpush

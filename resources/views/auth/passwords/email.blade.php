@@ -1,47 +1,41 @@
 @extends('layouts.app')
 
+@section('title', 'Reset Password')
+
 @section('content')
-<div class="container">
-    <div class="row justify-content-center">
-        <div class="col-md-8">
-            <div class="card">
-                <div class="card-header">{{ __('Reset Password') }}</div>
-
-                <div class="card-body">
-                    @if (session('status'))
-                        <div class="alert alert-success" role="alert">
-                            {{ session('status') }}
-                        </div>
-                    @endif
-
-                    <form method="POST" action="{{ route('password.email') }}">
-                        @csrf
-
-                        <div class="row mb-3">
-                            <label for="email" class="col-md-4 col-form-label text-md-end">{{ __('Email Address') }}</label>
-
-                            <div class="col-md-6">
-                                <input id="email" type="email" class="form-control @error('email') is-invalid @enderror" name="email" value="{{ old('email') }}" required autocomplete="email" autofocus>
-
-                                @error('email')
-                                    <span class="invalid-feedback" role="alert">
-                                        <strong>{{ $message }}</strong>
-                                    </span>
-                                @enderror
-                            </div>
-                        </div>
-
-                        <div class="row mb-0">
-                            <div class="col-md-6 offset-md-4">
-                                <button type="submit" class="btn btn-primary">
-                                    {{ __('Send Password Reset Link') }}
-                                </button>
-                            </div>
-                        </div>
-                    </form>
-                </div>
+    <div class="auth-grid">
+        <section class="auth-promo">
+            <div class="eyebrow">
+                <i class="bi bi-envelope-paper"></i>
+                Recovery Flow
             </div>
-        </div>
+            <h1>Recover workspace access securely.</h1>
+            <p>We will send a password reset link to the operator email address associated with your ADMS account.</p>
+        </section>
+
+        <section class="auth-panel">
+            <div class="auth-panel-header">
+                <h2>Request reset link</h2>
+                <p>Enter your email address to receive password recovery instructions.</p>
+            </div>
+
+            @if (session('status'))
+                <div class="alert alert-success">{{ session('status') }}</div>
+            @endif
+
+            <form method="POST" action="{{ route('password.email') }}" class="panel-stack">
+                @csrf
+
+                <div>
+                    <label for="email" class="form-label fw-semibold">Email Address</label>
+                    <input id="email" type="email" class="form-control @error('email') is-invalid @enderror" name="email" value="{{ old('email') }}" required autocomplete="email" autofocus>
+                    @error('email')
+                        <div class="invalid-feedback d-block">{{ $message }}</div>
+                    @enderror
+                </div>
+
+                <button type="submit" class="btn btn-primary w-100">Send Password Reset Link</button>
+            </form>
+        </section>
     </div>
-</div>
 @endsection
