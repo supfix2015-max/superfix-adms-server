@@ -261,7 +261,30 @@ class DeviceService
 
     public function deleteDevice(int $deviceId): bool
     {
-        return $this->repository->delete($deviceId);
+        /** @var Device|null $device */
+        $device = Device::withTrashed()->find($deviceId);
+
+        if (! $device) {
+            return false;
+        }
+
+        return (bool) DB::transaction(function () use ($device): bool {
+            DB::table('employees')
+                ->where('device_id', $device->id)
+                ->update([
+                    'device_id' => null,
+                    'updated_at' => now(),
+                ]);
+
+            DB::table('attendance_logs')
+                ->where('device_id', $device->id)
+                ->update([
+                    'device_id' => null,
+                    'updated_at' => now(),
+                ]);
+
+            return (bool) $device->forceDelete();
+        });
     }
 
     public function restoreDevice(int $deviceId): bool
