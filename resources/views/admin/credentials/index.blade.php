@@ -111,7 +111,11 @@
                         No online devices are currently polling ADMS. Remote enrollment is available only while the target device is online.
                     </div>
                 @else
-                    <form method="POST" action="{{ route('admin.credentials.biometric-enrollment') }}">
+                    <form
+                        method="POST"
+                        action="{{ route('admin.credentials.biometric-enrollment') }}"
+                        id="credentialBiometricEnrollmentForm"
+                    >
                         @csrf
                         <div class="mb-3">
                             <label class="form-label fw-medium">Employee <span class="text-danger">*</span></label>
@@ -360,6 +364,9 @@
         </div>
     </div>
 </div>
+
+@include('admin.partials.biometric-enrollment-visualizer', ['modalId' => 'credentialBiometricEnrollmentModal'])
+
 @endsection
 
 @push('extra_js')
@@ -429,5 +436,11 @@ if (enrollmentEmployee) {
 }
 
 syncEnrollmentFieldState();
+
+window.initBiometricEnrollmentVisualizer?.({
+    formSelector: '#credentialBiometricEnrollmentForm',
+    typeSelector: '#credentialBiometricType',
+    modalId: 'credentialBiometricEnrollmentModal',
+});
 </script>
 @endpush

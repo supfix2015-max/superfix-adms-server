@@ -33,6 +33,8 @@ class AdminCredentialsPageTest extends TestCase
         $response->assertOk();
         $response->assertSee('Configured Credentials', false);
         $response->assertSee('Online Biometric Enrollment', false);
+        $response->assertSee('Queueing the enrollment command', false);
+        $response->assertSee('credentialBiometricEnrollmentModal', false);
         $response->assertSee('John Doe', false);
         $response->assertSee('Jane Doe', false);
         $response->assertSee(route('admin.credentials.store'), false);
@@ -157,5 +159,51 @@ class AdminCredentialsPageTest extends TestCase
         $this->assertSame('2', $command->parameters['fid'] ?? null);
         $this->assertSame(4, $command->parameters['retry'] ?? null);
         $this->assertTrue((bool) ($command->parameters['overwrite'] ?? false));
+    }
+
+    public function test_credentials_page_biometric_enrollment_supports_json_visualizer_flow(): void
+    {
+        $device = Device::query()->create([
+            'name' => 'Lobby Terminal',
+            'serial_number' => 'SER-202',
+            'sn' => 'SER-202',
+            'ip_address' => '192.168.1.202',
+            'status' => 'active',
+            'last_seen' => now(),
+            'last_heartbeat' => now(),
+        ]);
+
+        $employee = Employee::query()->create([
+            'employee_id' => '991007',
+            'device_id' => $device->id,
+            'uid' => '991007',
+            'sync_uid' => '991007',
+            'name' => 'Credential JSON User',
+            'status' => 'active',
+        ]);
+
+        $response = $this->postJson(route('admin.credentials.biometric-enrollment'), [
+            'enrollment_employee_id' => $employee->id,
+            'enrollment_device_id' => $device->id,
+            'biometric_type' => 'face',
+            'retry' => 3,
+            'overwrite' => 1,
+        ]);
+
+        $response->assertStatus(202);
+        $response->assertJsonPath('status.phase', 'queued');
+        $response->assertJsonPath('status.biometric_type', 'face');
+        $response->assertJsonPath('status.template_index', '50');
+        $response->assertJsonPath('status.employee.id', $employee->id);
+        $response->assertJsonPath('status.device.id', $device->id);
+
+        $command = DeviceCommand::query()->latest('id')->firstOrFail();
+
+        $this->assertSame('face', $command->parameters['biometric_type']);
+        $this->assertSame('50', $command->parameters['template_index']);
+        $this->assertStringContainsString(
+            route('admin.employees.biometric-enrollment-status', [$employee, $command]),
+            $response->json('status_url')
+        );
     }
 }

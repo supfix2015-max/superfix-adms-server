@@ -10,6 +10,7 @@ use App\Services\DeviceService;
 use App\Services\UserSyncService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Schema;
 use Tests\TestCase;
 
 class ZktecoAdmsQaTest extends TestCase
@@ -334,6 +335,117 @@ class ZktecoAdmsQaTest extends TestCase
         ]);
     }
 
+    public function test_failed_biometric_callback_creates_rejection_error_log(): void
+    {
+        $device = Device::query()->create([
+            'name' => 'QA Device',
+            'sn' => 'BIOREJECT123',
+            'serial_number' => 'BIOREJECT123',
+            'status' => 'active',
+        ]);
+
+        $employee = Employee::query()->create([
+            'employee_id' => '1009',
+            'uid' => '1009',
+            'sync_uid' => '1009',
+            'name' => 'Reject User',
+            'status' => 'active',
+        ]);
+
+        $command = DeviceCommand::query()->create([
+            'device_id' => $device->id,
+            'employee_id' => $employee->id,
+            'command' => 'SYNC_BIOMETRICS',
+            'parameters' => [
+                'employee_code' => '1009',
+                'pin' => '1009',
+                'biometric_type' => 'face',
+                'template_index' => '50',
+            ],
+            'status' => DeviceCommand::STATUS_SENT,
+            'sent_at' => now(),
+        ]);
+
+        $response = $this->call(
+            'POST',
+            '/iclock/devicecmd?SN=BIOREJECT123',
+            [],
+            [],
+            [],
+            ['CONTENT_TYPE' => 'text/plain'],
+            "ID={$command->id}\nReturn=ERROR\nCMD=DATA UPDATE FACE\nMessage=Verification failed",
+        );
+
+        $response->assertOk();
+
+        $command->refresh();
+
+        $this->assertSame(DeviceCommand::STATUS_PENDING, $command->status);
+        $this->assertSame('Verification failed', $command->error_message);
+        $this->assertDatabaseHas('error_logs', [
+            'device_id' => $device->id,
+            'type' => 'queue_error',
+            'error_code' => 'BIOMETRIC_PUSH_REJECTED',
+            'resolved' => false,
+        ]);
+    }
+
+    public function test_device_command_callback_completes_user_sync_batch_progress(): void
+    {
+        $device = Device::query()->create([
+            'name' => 'QA Device',
+            'sn' => 'SYNCBATCH123',
+            'serial_number' => 'SYNCBATCH123',
+            'status' => 'active',
+        ]);
+
+        $employee = Employee::query()->create([
+            'device_id' => $device->id,
+            'employee_id' => '1001',
+            'uid' => '1001',
+            'sync_uid' => '1001',
+            'name' => 'John Sync',
+            'sync_name' => 'John Sync',
+            'status' => 'active',
+            'sync_enabled' => true,
+        ]);
+
+        app(UserSyncService::class)->refreshDeviceSafeDataset(collect([$employee->fresh()]));
+
+        $sync = app(UserSyncService::class)->queueFullSyncForDevice($device, true, 'qa');
+        $this->assertNotNull($sync);
+
+        app(UserSyncService::class)->dispatchQueuedBatch($sync->id);
+
+        $command = DeviceCommand::query()
+            ->where('device_sync_id', $sync->id)
+            ->where('command', 'SYNC_EMPLOYEES')
+            ->firstOrFail();
+
+        $this->get('/iclock/getrequest?SN=SYNCBATCH123')->assertOk();
+
+        $this->call(
+            'POST',
+            '/iclock/devicecmd?SN=SYNCBATCH123',
+            [],
+            [],
+            [],
+            ['CONTENT_TYPE' => 'text/plain'],
+            "ID={$command->id}\nReturn=OK\nCMD=DATA UPDATE USERINFO",
+        )->assertOk();
+
+        $sync->refresh();
+        $device->refresh();
+
+        $this->assertSame('completed', $sync->status);
+        $this->assertSame(1, $sync->queued_records);
+        $this->assertSame(1, $sync->processed_records);
+        $this->assertSame(1, $sync->successful_records);
+        $this->assertSame(0, $sync->failed_records);
+        $this->assertSame($sync->version, $device->last_user_sync_version);
+        $this->assertFalse($device->pending_full_resync);
+    }
+
     public function test_pull_employees_command_requests_device_data_and_userinfo_upload_persists_it(): void
     {
         $device = Device::query()->create([
@@ -379,7 +491,7 @@ class ZktecoAdmsQaTest extends TestCase
         $this->assertSame(DeviceCommand::STATUS_DONE, $command->status);
     }
 
-    public function test_operlog_user_payload_variant_is_parsed_and_persisted_as_employees(): void
+    public function test_operlog_user_payload_is_ignored_for_employee_creation(): void
     {
         Device::query()->create([
             'name' => 'QA Device',
@@ -404,49 +516,93 @@ class ZktecoAdmsQaTest extends TestCase
         );
 
         $response->assertOk();
-        $response->assertSee('OK:2', false);
+        $response->assertSee('OK:0', false);
 
-        $this->assertDatabaseHas('employees', [
-            'employee_id' => '1',
+        $this->assertDatabaseMissing('employees', [
             'name' => 'User 1',
         ]);
-        $this->assertDatabaseHas('employees', [
-            'employee_id' => '1001',
+        $this->assertDatabaseMissing('employees', [
             'name' => 'User 1001',
-            'card_no' => '1234',
-            'device_privilege' => 0,
-            'group_code' => '1',
-            'timezone_code' => '0000000100000000',
-            'verification_mode' => '-1',
         ]);
         $this->assertDatabaseHas('raw_logs', [
             'endpoint' => '/iclock/cdata',
             'processing_status' => 'processed',
-            'record_count' => 2,
+            'record_count' => 0,
         ]);
     }
 
-    public function test_biometric_payload_is_persisted_and_updates_device_counters(): void
+    public function test_cleanup_legacy_malformed_users_removes_user_oplog_rows(): void
     {
-        $device = Device::query()->create([
+        $legacy = Employee::query()->create([
+            'employee_id' => 'OPLOG71',
+            'name' => 'User OPLOG71',
+            'status' => 'active',
+            'raw_payload' => [
+                'PIN' => 'OPLOG71',
+                'Name' => 'User OPLOG71',
+            ],
+        ]);
+
+        $kept = Employee::query()->create([
+            'employee_id' => '1001',
+            'name' => 'John Doe',
+            'status' => 'active',
+            'raw_payload' => [
+                'PIN' => '1001',
+                'Name' => 'John Doe',
+            ],
+        ]);
+
+        $deleted = app(UserSyncService::class)->cleanupLegacyMalformedUsers();
+
+        $this->assertSame(1, $deleted);
+        $this->assertDatabaseMissing('employees', ['id' => $legacy->id]);
+        $this->assertDatabaseHas('employees', ['id' => $kept->id, 'name' => 'John Doe']);
+    }
+
+    public function test_oplog_attendance_payload_is_ignored_and_does_not_create_employees(): void
+    {
+        Device::query()->create([
             'name' => 'QA Device',
             'sn' => 'TEST123',
             'serial_number' => 'TEST123',
             'status' => 'active',
         ]);
 
-        $employee = Employee::query()->create([
-            'device_id' => $device->id,
-            'employee_id' => '1001',
-            'uid' => '1001',
-            'sync_uid' => '1001',
-            'name' => 'John Doe',
-            'sync_name' => 'John Doe',
+        Employee::query()->create([
+            'employee_id' => 'OPLOG71',
+            'name' => 'User OPLOG71',
             'status' => 'active',
-            'sync_enabled' => true,
+            'raw_payload' => [
+                'PIN' => 'OPLOG71',
+                'Name' => 'User OPLOG71',
+            ],
         ]);
 
-        $payload = implode("\n", [
+        $response = $this->call(
+            'POST',
+            '/iclock/cdata?SN=TEST123&table=ATTLOG&Stamp=11',
+            [],
+            [],
+            [],
+            ['CONTENT_TYPE' => 'text/plain'],
+            "OPLOG 71\t0\t2026-04-21 11:40:18\t1\t0\t0\t0",
+        );
+
+        $response->assertOk();
+        $response->assertSee('OK:0', false);
+
+        $this->assertDatabaseMissing('employees', [
+            'employee_id' => 'OPLOG71',
+        ]);
+        $this->assertDatabaseMissing('attendance_logs', [
+            'employee_code' => 'OPLOG71',
+        ]);
+    }
+
+    public function test_biometric_payload_is_persisted_and_updates_device_counters(): void
+    {
+                $payload = implode("\n", [
             'FP PIN=1001	FID=0	Size=16	Valid=1	TMP=FINGERPRINT_TEMPLATE',
             'FACE PIN=1001	FID=50	Size=24	Valid=1	TMP=FACE_TEMPLATE',
             'USERPIC PIN=1001	FileName=1001.jpg	Size=12	Content=PHOTO_TEMPLATE',
@@ -491,6 +647,95 @@ class ZktecoAdmsQaTest extends TestCase
 
         $this->assertSame(1, $device->enrolled_fingerprints);
         $this->assertSame(1, $device->enrolled_faces);
+    }
+
+    public function test_biodata_fingerprint_payload_is_persisted_after_enrollment_callback(): void
+    {
+        $device = Device::query()->create([
+            'name' => 'QA Device',
+            'sn' => 'BIODATA123',
+            'serial_number' => 'BIODATA123',
+            'status' => 'active',
+        ]);
+
+        $employee = Employee::query()->create([
+            'device_id' => $device->id,
+            'employee_id' => '1002',
+            'uid' => '1002',
+            'sync_uid' => '1002',
+            'name' => 'Biodata User',
+            'sync_name' => 'Biodata User',
+            'status' => 'active',
+            'sync_enabled' => true,
+        ]);
+
+        $payload = 'BIODATA Pin=1002	No=9	Index=0	Valid=1	Duress=0	Type=1	MajorVer=13	MinorVer=0	Format=0	Tmp=BIODATA_TEMPLATE';
+
+        $response = $this->call(
+            'POST',
+            '/iclock/cdata?SN=BIODATA123&table=OPERLOG&Stamp=11',
+            [],
+            [],
+            [],
+            ['CONTENT_TYPE' => 'text/plain'],
+            $payload,
+        );
+
+        $response->assertOk();
+        $response->assertSee('OK:1', false);
+
+        $this->assertDatabaseHas('employee_biometrics', [
+            'device_id' => $device->id,
+            'employee_id' => $employee->id,
+            'employee_code' => '1002',
+            'biometric_type' => EmployeeBiometric::TYPE_FINGERPRINT,
+            'template_index' => '0',
+            'template_data' => 'BIODATA_TEMPLATE',
+        ]);
+    }
+
+    public function test_biometric_payload_still_succeeds_when_biometric_template_store_is_not_migrated(): void
+    {
+        Schema::dropIfExists('biometric_templates');
+
+        $device = Device::query()->create([
+            'name' => 'QA Device',
+            'sn' => 'NOBIOTABLE123',
+            'serial_number' => 'NOBIOTABLE123',
+            'status' => 'active',
+        ]);
+
+        $employee = Employee::query()->create([
+            'device_id' => $device->id,
+            'employee_id' => '1001',
+            'uid' => '1001',
+            'sync_uid' => '1001',
+            'name' => 'John Doe',
+            'sync_name' => 'John Doe',
+            'status' => 'active',
+            'sync_enabled' => true,
+        ]);
+
+        $response = $this->call(
+            'POST',
+            '/iclock/cdata?SN=NOBIOTABLE123&table=OPERLOG&Stamp=11',
+            [],
+            [],
+            [],
+            ['CONTENT_TYPE' => 'text/plain'],
+            'FP PIN=1001	FID=0	Size=16	Valid=1	TMP=FINGERPRINT_TEMPLATE',
+        );
+
+        $response->assertOk();
+        $response->assertSee('OK:1', false);
+
+        $this->assertDatabaseHas('employee_biometrics', [
+            'device_id' => $device->id,
+            'employee_id' => $employee->id,
+            'employee_code' => '1001',
+            'biometric_type' => EmployeeBiometric::TYPE_FINGERPRINT,
+            'template_index' => '0',
+        ]);
     }
 
     public function test_full_sync_commands_include_device_credentials(): void
@@ -549,6 +794,10 @@ class ZktecoAdmsQaTest extends TestCase
 
     public function test_full_sync_dispatch_includes_biometric_templates_after_userinfo(): void
     {
+        $fingerprintTemplate = base64_encode('FINGERPRINT_TEMPLATE');
+        $faceTemplate = base64_encode('FACE_TEMPLATE');
+        $uploadedFaceTemplate = base64_encode(str_repeat('F', 16).'FACE_TEMPLATE');
+
         $targetDevice = Device::query()->create([
             'name' => 'Target Device',
             'sn' => 'TARGET123',
@@ -581,9 +830,14 @@ class ZktecoAdmsQaTest extends TestCase
             'biometric_type' => EmployeeBiometric::TYPE_FINGERPRINT,
             'template_index' => '0',
             'is_valid' => true,
-            'data_size' => 16,
-            'template_data' => 'FINGERPRINT_TEMPLATE',
+            'data_size' => strlen($fingerprintTemplate),
+            'template_data' => $fingerprintTemplate,
             'sync_key' => sha1('fingerprint-template'),
+            'raw_payload' => [
+                'FP PIN' => '1001',
+                'FID' => '0',
+                'TMP' => $fingerprintTemplate,
+            ],
         ]);
 
         EmployeeBiometric::query()->create([
@@ -593,9 +847,15 @@ class ZktecoAdmsQaTest extends TestCase
             'biometric_type' => EmployeeBiometric::TYPE_FACE,
             'template_index' => '50',
             'is_valid' => true,
-            'data_size' => 24,
-            'template_data' => 'FACE_TEMPLATE',
+            'data_size' => strlen($uploadedFaceTemplate),
+            'template_data' => $uploadedFaceTemplate,
             'sync_key' => sha1('face-template'),
+            'raw_payload' => [
+                'FACE PIN' => '1001',
+                'FID' => '50',
+                'TMP' => $uploadedFaceTemplate,
+                'face_upload_prefixed' => true,
+            ],
         ]);
 
         app(UserSyncService::class)->refreshDeviceSafeDataset(
@@ -630,12 +890,107 @@ class ZktecoAdmsQaTest extends TestCase
         $fingerprintCommand->assertOk();
         $fingerprintCommand->assertSee('DATA UPDATE FINGERTMP PIN=1001', false);
         $fingerprintCommand->assertSee('FID=0', false);
-        $fingerprintCommand->assertSee('TMP=FINGERPRINT_TEMPLATE', false);
+        $fingerprintCommand->assertSee('Size='.strlen($fingerprintTemplate), false);
+        $fingerprintCommand->assertSee("TMP={$fingerprintTemplate}", false);
 
         $faceCommand->assertOk();
         $faceCommand->assertSee('DATA UPDATE FACE PIN=1001', false);
         $faceCommand->assertSee('FID=50', false);
-        $faceCommand->assertSee('TMP=FACE_TEMPLATE', false);
+        $faceCommand->assertSee('Size='.strlen($faceTemplate), false);
+        $faceCommand->assertSee("TMP={$faceTemplate}", false);
+    }
+
+    public function test_full_sync_replays_plain_adms_templates_without_reencoding_them(): void
+    {
+        $fingerprintTemplate = 'RAW_FINGERPRINT_01';
+        $faceTemplate = 'RAW_FACE_TEMPLATE_50';
+
+        $targetDevice = Device::query()->create([
+            'name' => 'Replay Target',
+            'sn' => 'REPLAY-TARGET-001',
+            'serial_number' => 'REPLAY-TARGET-001',
+            'status' => 'active',
+        ]);
+
+        $sourceDevice = Device::query()->create([
+            'name' => 'Replay Source',
+            'sn' => 'REPLAY-SOURCE-001',
+            'serial_number' => 'REPLAY-SOURCE-001',
+            'status' => 'active',
+        ]);
+
+        $employee = Employee::query()->create([
+            'device_id' => $sourceDevice->id,
+            'employee_id' => '2001',
+            'uid' => '2001',
+            'sync_uid' => '2001',
+            'name' => 'Replay User',
+            'sync_name' => 'Replay User',
+            'status' => 'active',
+            'sync_enabled' => true,
+        ]);
+
+        EmployeeBiometric::query()->create([
+            'device_id' => $sourceDevice->id,
+            'employee_id' => $employee->id,
+            'employee_code' => '2001',
+            'biometric_type' => EmployeeBiometric::TYPE_FINGERPRINT,
+            'template_index' => '1',
+            'is_valid' => true,
+            'data_size' => strlen($fingerprintTemplate),
+            'template_data' => $fingerprintTemplate,
+            'sync_key' => sha1('raw-fingerprint-template'),
+            'raw_payload' => [
+                'FP PIN' => '2001',
+                'FID' => '1',
+                'TMP' => $fingerprintTemplate,
+            ],
+        ]);
+
+        EmployeeBiometric::query()->create([
+            'device_id' => $sourceDevice->id,
+            'employee_id' => $employee->id,
+            'employee_code' => '2001',
+            'biometric_type' => EmployeeBiometric::TYPE_FACE,
+            'template_index' => '50',
+            'is_valid' => true,
+            'data_size' => strlen($faceTemplate),
+            'template_data' => $faceTemplate,
+            'sync_key' => sha1('raw-face-template'),
+            'raw_payload' => [
+                'FACE PIN' => '2001',
+                'FID' => '50',
+                'TMP' => $faceTemplate,
+            ],
+        ]);
+
+        app(UserSyncService::class)->refreshDeviceSafeDataset(
+            collect([
+                Employee::query()->with('biometrics')->findOrFail($employee->id),
+            ])
+        );
+
+        $sync = app(UserSyncService::class)->queueFullSyncForDevice($targetDevice, true, 'qa');
+        $this->assertNotNull($sync);
+
+        app(UserSyncService::class)->dispatchQueuedBatch($sync->id);
+
+        $this->get('/iclock/getrequest?SN=REPLAY-TARGET-001')->assertOk();
+
+        $fingerprintCommand = $this->get('/iclock/getrequest?SN=REPLAY-TARGET-001');
+        $faceCommand = $this->get('/iclock/getrequest?SN=REPLAY-TARGET-001');
+
+        $fingerprintCommand->assertOk();
+        $fingerprintCommand->assertSee('DATA UPDATE FINGERTMP PIN=2001', false);
+        $fingerprintCommand->assertSee('FID=1', false);
+        $fingerprintCommand->assertSee('Size='.strlen($fingerprintTemplate), false);
+        $fingerprintCommand->assertSee("TMP={$fingerprintTemplate}", false);
+
+        $faceCommand->assertOk();
+        $faceCommand->assertSee('DATA UPDATE FACE PIN=2001', false);
+        $faceCommand->assertSee('FID=50', false);
+        $faceCommand->assertSee('Size='.strlen($faceTemplate), false);
+        $faceCommand->assertSee("TMP={$faceTemplate}", false);
     }
 
     public function test_remote_fingerprint_enrollment_command_is_formatted_for_device_polling(): void

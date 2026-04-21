@@ -5,6 +5,7 @@ namespace App\Services;
 use App\DataTransferObjects\SyncableEmployeeData;
 use App\Jobs\PrepareUserSyncBatchJob;
 use App\Models\Device;
+use App\Models\DeviceCommand;
 use App\Models\DeviceSync;
 use App\Models\Employee;
 use App\Models\EmployeeBiometric;
@@ -17,6 +18,14 @@ use Illuminate\Support\Str;
 
 class UserSyncService
 {
+    public const SCOPE_FULL = 'full';
+
+    public const SCOPE_EMPLOYEES = 'employees';
+
+    public const SCOPE_FACE = 'face';
+
+    public const SCOPE_FINGERPRINT = 'fingerprint';
+
     public function __construct(
         protected EmployeeRepository $employeeRepository,
         protected DeviceRepository $deviceRepository,
@@ -40,6 +49,16 @@ class UserSyncService
             $syncUid = $this->normalizeNumericIdentifier($record['uid'] ?? $record['employee_code'] ?? null);
             $syncName = $this->sanitizeSyncName($record['name'] ?? null);
             $credentialAttributes = $this->sanitizeCredentialAttributes($record);
+
+            if ($this->isLegacyOperationLogRecord(
+                $record['employee_code'] ?? null,
+                $record['name'] ?? null,
+                is_array($record['raw'] ?? null) ? $record['raw'] : [],
+            )) {
+                $warnings[] = sprintf('Ignored legacy OPLOG pseudo-user record: %s', json_encode($record, JSON_THROW_ON_ERROR));
+
+                continue;
+            }
 
             if ($employeeId === null || $syncUid === null || $syncName === null) {
                 $warnings[] = sprintf('Rejected malformed user record: %s', json_encode($record, JSON_THROW_ON_ERROR));
@@ -186,6 +205,7 @@ class UserSyncService
 
         $rows = [];
         $deletedIds = [];
+        $deletedCodes = [];
 
         foreach ($evaluated as $item) {
             /** @var Employee $employee */
@@ -200,6 +220,7 @@ class UserSyncService
 
             if (in_array('legacy_operation_log_record', $errors, true) && config('zkteco.auto_cleanup_legacy_users', false)) {
                 $deletedIds[] = $employee->id;
+                $deletedCodes[] = strtoupper(trim((string) $employee->employee_id));
                 $syncEnabled = false;
             }
 
@@ -222,78 +243,139 @@ class UserSyncService
             }
         }
 
-        if ($deletedIds !== []) {
-            Employee::query()->whereIn('id', $deletedIds)->delete();
-        }
+        $deletedSummary = $deletedCodes !== []
+            ? $this->purgeLegacyOperationLogArtifacts(array_values(array_unique($deletedCodes)))
+            : ['employees' => 0];
 
         return [
             'total' => $evaluated->count(),
             'sync_safe' => collect($rows)->where('sync_enabled', true)->count(),
             'rejected' => collect($rows)->where('sync_enabled', false)->count(),
-            'deleted' => count(array_unique($deletedIds)),
+            'deleted' => $deletedSummary['employees'] ?? count(array_unique($deletedIds)),
         ];
     }
 
     public function cleanupLegacyMalformedUsers(): int
     {
-        $legacyIds = Employee::query()
-            ->where(function ($query): void {
-                $query->where('employee_id', 'like', 'OPLOG%')
-                    ->orWhere(function ($nested): void {
-                        $nested->whereNull('uid')
-                            ->whereNotNull('raw_payload')
-                            ->where('name', 'like', 'User OPLOG%');
-                    });
+        return $this->purgeLegacyOperationLogArtifacts()['employees'];
+    }
+
+    public function purgeLegacyOperationLogArtifacts(?array $employeeCodes = null): array
+    {
+        $legacyEmployees = Employee::withTrashed()
+            ->get()
+            ->filter(function (Employee $employee) use ($employeeCodes): bool {
+                if (! $this->isLegacyMalformedEmployee($employee)) {
+                    return false;
+                }
+
+                if ($employeeCodes === null || $employeeCodes === []) {
+                    return true;
+                }
+
+                return in_array(strtoupper(trim((string) $employee->employee_id)), $employeeCodes, true);
             })
-            ->pluck('id')
+            ->values();
+
+        $legacyIds = $legacyEmployees->pluck('id')->all();
+        $codes = collect($employeeCodes ?? [])
+            ->map(static fn (mixed $code): string => strtoupper(trim((string) $code)))
+            ->filter()
+            ->merge($legacyEmployees->pluck('employee_id')->map(static fn (mixed $code): string => strtoupper(trim((string) $code))))
+            ->unique()
+            ->values()
             ->all();
 
-        if ($legacyIds === []) {
-            return 0;
+        $deletedAttendance = 0;
+        $deletedEmployees = 0;
+
+        if ($codes !== []) {
+            $attendanceLogs = \App\Models\AttendanceLog::withTrashed()
+                ->get()
+                ->filter(function (\App\Models\AttendanceLog $log) use ($codes): bool {
+                    if (in_array(strtoupper(trim((string) $log->employee_code)), $codes, true)) {
+                        return true;
+                    }
+
+                    $rawPayload = is_array($log->raw_payload) ? $log->raw_payload : [];
+
+                    return $this->isLegacyOperationLogRecord(
+                        $log->employee_code,
+                        $rawPayload['Name'] ?? null,
+                        $rawPayload,
+                    );
+                })
+                ->values();
+
+            $deletedAttendance = $attendanceLogs->count();
+
+            $attendanceLogs->each(static function (\App\Models\AttendanceLog $log): void {
+                $log->forceDelete();
+            });
         }
 
-        return Employee::query()->whereIn('id', $legacyIds)->delete();
+        if ($legacyIds !== []) {
+            $legacyEmployees->each(static function (Employee $employee): void {
+                $employee->forceDelete();
+            });
+
+            $deletedEmployees = count($legacyIds);
+        }
+
+        return [
+            'employees' => $deletedEmployees,
+            'attendance_logs' => $deletedAttendance,
+        ];
+    }
+
+    public function isLegacyOperationLogRecord(mixed $employeeCode, ?string $name = null, array $rawPayload = []): bool
+    {
+        $employeeCode = strtoupper(trim((string) $employeeCode));
+        $name = strtoupper(trim((string) $name));
+        $rawPin = strtoupper(trim((string) ($rawPayload['PIN'] ?? $rawPayload['USER PIN'] ?? '')));
+        $rawName = strtoupper(trim((string) ($rawPayload['Name'] ?? '')));
+
+        if (str_starts_with($name, 'USER OPLOG')) {
+            return true;
+        }
+
+        if (str_starts_with($employeeCode, 'OPLOG') || str_starts_with($rawPin, 'OPLOG')) {
+            return true;
+        }
+
+        return str_starts_with($rawName, 'USER OPLOG');
+    }
+
+    private function isLegacyMalformedEmployee(Employee $employee): bool
+    {
+        $rawPayload = is_array($employee->raw_payload) ? $employee->raw_payload : [];
+
+        return $this->isLegacyOperationLogRecord(
+            $employee->employee_id,
+            $employee->name ?: $employee->sync_name ?: null,
+            $rawPayload,
+        );
     }
 
     public function queueFullSyncForDevice(Device $device, bool $force = false, string $trigger = 'manual'): ?DeviceSync
     {
-        $dataset = $this->deviceSafeDataset();
-        if ($dataset->isEmpty()) {
+        return $this->queueScopedSyncForDevice($device, self::SCOPE_FULL, $force, $trigger);
+    }
+
+    public function queueScopedSyncForDevice(
+        Device $device,
+        string $scope = self::SCOPE_FULL,
+        bool $force = false,
+        string $trigger = 'manual',
+    ): ?DeviceSync
+    {
+        $prepared = $this->prepareScopedSyncPayload($scope);
+
+        if ($prepared['matching_user_count'] === 0) {
             return null;
         }
 
-        $snapshot = $dataset->map(static fn (SyncableEmployeeData $employee): array => $employee->toSnapshot())
-            ->sortBy('employee_id')
-            ->values()
-            ->all();
-
-        $datasetHash = sha1(json_encode($snapshot, JSON_THROW_ON_ERROR));
-
-        if (! $force) {
-            $existing = $this->deviceSyncRepository->findReusableBatch($device->id, DeviceSync::TYPE_USERS, $datasetHash);
-            if ($existing) {
-                return $existing;
-            }
-        }
-
-        $sync = DeviceSync::query()->create([
-            'device_id' => $device->id,
-            'sync_type' => DeviceSync::TYPE_USERS,
-            'version' => $this->deviceSyncRepository->nextVersionForDevice($device->id, DeviceSync::TYPE_USERS),
-            'dataset_hash' => $datasetHash,
-            'status' => DeviceSync::STATUS_QUEUED,
-            'total_records' => $dataset->sum(static fn (SyncableEmployeeData $employee): int => 1 + count($employee->biometrics)),
-            'sync_metadata' => [
-                'trigger' => $trigger,
-                'snapshot' => $snapshot,
-            ],
-        ]);
-
-        PrepareUserSyncBatchJob::dispatch($sync->id)->onQueue('device-syncs');
-
-        $device->forceFill(['pending_full_resync' => true])->save();
-
-        return $sync;
+        return $this->queuePreparedSyncForDevice($device, $prepared, $force, $trigger);
     }
 
     public function queueFullSyncForAllDevices(bool $force = false, string $trigger = 'manual'): int
@@ -309,11 +391,16 @@ class UserSyncService
         return $queued;
     }
 
-    public function queueGlobalUserSync(bool $force = false, string $trigger = 'manual'): array
+    public function queueGlobalUserSync(
+        bool $force = false,
+        string $trigger = 'manual',
+        string $scope = self::SCOPE_FULL,
+    ): array
     {
+        $scope = $this->normalizeSyncScope($scope);
         $refreshSummary = $this->refreshDeviceSafeDataset();
         $activeDevices = $this->deviceRepository->getActive();
-        $dataset = $this->deviceSafeDataset();
+        $prepared = $this->prepareScopedSyncPayload($scope);
 
         $syncIds = [];
         $batches = [];
@@ -321,7 +408,7 @@ class UserSyncService
 
         foreach ($activeDevices as $device) {
             $beforeId = DeviceSync::query()->max('id') ?? 0;
-            $batch = $this->queueFullSyncForDevice($device, $force, $trigger);
+            $batch = $this->queuePreparedSyncForDevice($device, $prepared, $force, $trigger);
 
             if (! $batch) {
                 continue;
@@ -344,12 +431,89 @@ class UserSyncService
             'sync_ids' => $syncIds,
             'batches' => $batches,
             'summary' => [
+                'scope' => $scope,
                 'active_device_count' => $activeDevices->count(),
-                'safe_user_count' => $dataset->count(),
+                'safe_user_count' => $prepared['safe_user_count'],
+                'matching_user_count' => $prepared['matching_user_count'],
+                'matching_biometric_count' => $prepared['matching_biometric_count'],
                 'new_batch_count' => $newBatchCount,
                 'refresh' => $refreshSummary,
             ],
         ];
+    }
+
+    public function syncScopeLabel(string $scope): string
+    {
+        return match ($this->normalizeSyncScope($scope)) {
+            self::SCOPE_EMPLOYEES => 'employee',
+            self::SCOPE_FACE => 'face template',
+            self::SCOPE_FINGERPRINT => 'fingerprint template',
+            default => 'user and biometric',
+        };
+    }
+
+    private function queuePreparedSyncForDevice(
+        Device $device,
+        array $prepared,
+        bool $force = false,
+        string $trigger = 'manual',
+    ): ?DeviceSync
+    {
+        if (($prepared['matching_user_count'] ?? 0) === 0) {
+            return null;
+        }
+
+        $scope = $prepared['scope'];
+        $snapshot = $prepared['snapshot'];
+        $datasetHash = sha1(json_encode([
+            'scope' => $scope,
+            'snapshot' => $snapshot,
+        ], JSON_THROW_ON_ERROR));
+
+        if (! $force) {
+            $existing = $this->deviceSyncRepository->findReusableBatch($device->id, DeviceSync::TYPE_USERS, $datasetHash);
+            if ($existing) {
+                $existing = $this->reconcileReusableBatch($existing);
+
+                if (
+                    $existing->status === DeviceSync::STATUS_QUEUED
+                    && ! DeviceCommand::query()->where('device_sync_id', $existing->id)->exists()
+                ) {
+                    $this->dispatchQueuedBatch($existing->id);
+                    $existing = $existing->fresh();
+                }
+
+                if (in_array($existing->status, [
+                    DeviceSync::STATUS_QUEUED,
+                    DeviceSync::STATUS_DISPATCHING,
+                    DeviceSync::STATUS_COMPLETED,
+                ], true)) {
+                    return $existing;
+                }
+            }
+        }
+
+        $sync = DeviceSync::query()->create([
+            'device_id' => $device->id,
+            'sync_type' => DeviceSync::TYPE_USERS,
+            'version' => $this->deviceSyncRepository->nextVersionForDevice($device->id, DeviceSync::TYPE_USERS),
+            'dataset_hash' => $datasetHash,
+            'status' => DeviceSync::STATUS_QUEUED,
+            'total_records' => $prepared['total_records'],
+            'sync_metadata' => [
+                'trigger' => $trigger,
+                'scope' => $scope,
+                'snapshot' => $snapshot,
+                'matching_user_count' => $prepared['matching_user_count'],
+                'matching_biometric_count' => $prepared['matching_biometric_count'],
+            ],
+        ]);
+
+        PrepareUserSyncBatchJob::dispatch($sync->id)->onQueue('device-syncs');
+
+        $device->forceFill(['pending_full_resync' => true])->save();
+
+        return $sync;
     }
 
     public function syncBatchStatus(array $syncIds): array
@@ -387,6 +551,100 @@ class UserSyncService
                 'error_message' => $batch->error_message,
             ])->all(),
         ];
+    }
+
+    private function prepareScopedSyncPayload(string $scope): array
+    {
+        $scope = $this->normalizeSyncScope($scope);
+        $dataset = $this->deviceSafeDataset();
+        $snapshot = $dataset
+            ->map(fn (SyncableEmployeeData $employee): ?array => $this->buildScopedSnapshotEntry($employee, $scope))
+            ->filter()
+            ->sortBy('employee_id')
+            ->values()
+            ->all();
+
+        return [
+            'scope' => $scope,
+            'snapshot' => $snapshot,
+            'safe_user_count' => $dataset->count(),
+            'matching_user_count' => count($snapshot),
+            'matching_biometric_count' => collect($snapshot)->sum(
+                static fn (array $entry): int => count($entry['biometrics'] ?? [])
+            ),
+            'total_records' => collect($snapshot)->sum(
+                static fn (array $entry): int => 1 + count($entry['biometrics'] ?? [])
+            ),
+        ];
+    }
+
+    private function buildScopedSnapshotEntry(SyncableEmployeeData $employee, string $scope): ?array
+    {
+        $biometrics = match ($scope) {
+            self::SCOPE_EMPLOYEES => [],
+            self::SCOPE_FACE => array_values(array_filter(
+                $employee->biometrics,
+                static fn (array $biometric): bool => ($biometric['biometric_type'] ?? null) === EmployeeBiometric::TYPE_FACE,
+            )),
+            self::SCOPE_FINGERPRINT => array_values(array_filter(
+                $employee->biometrics,
+                static fn (array $biometric): bool => ($biometric['biometric_type'] ?? null) === EmployeeBiometric::TYPE_FINGERPRINT,
+            )),
+            default => $employee->biometrics,
+        };
+
+        if (in_array($scope, [self::SCOPE_FACE, self::SCOPE_FINGERPRINT], true) && $biometrics === []) {
+            return null;
+        }
+
+        return [
+            'employee_record_id' => $employee->employeeRecordId,
+            'employee_id' => $employee->employeeId,
+            'sync_uid' => $employee->syncUid,
+            'sync_name' => $employee->syncName,
+            'card_no' => $employee->cardNo,
+            'device_password' => $employee->devicePassword,
+            'device_privilege' => $employee->devicePrivilege,
+            'group_code' => $employee->groupCode,
+            'timezone_code' => $employee->timezoneCode,
+            'verification_mode' => $employee->verificationMode,
+            'vice_card_no' => $employee->viceCardNo,
+            'valid_from' => $employee->validFrom,
+            'valid_until' => $employee->validUntil,
+            'biometrics' => $biometrics,
+            'department' => $employee->department,
+            'payload_hash' => sha1(json_encode([
+                'scope' => $scope,
+                'employee_id' => $employee->employeeId,
+                'sync_uid' => $employee->syncUid,
+                'sync_name' => $employee->syncName,
+                'card_no' => $employee->cardNo,
+                'device_password' => $employee->devicePassword,
+                'device_privilege' => $employee->devicePrivilege,
+                'group_code' => $employee->groupCode,
+                'timezone_code' => $employee->timezoneCode,
+                'verification_mode' => $employee->verificationMode,
+                'vice_card_no' => $employee->viceCardNo,
+                'valid_from' => $employee->validFrom,
+                'valid_until' => $employee->validUntil,
+                'biometrics' => array_map(static fn (array $biometric): array => [
+                    'biometric_type' => $biometric['biometric_type'] ?? null,
+                    'template_index' => $biometric['template_index'] ?? null,
+                    'file_name' => $biometric['file_name'] ?? null,
+                    'template_hash' => sha1((string) ($biometric['template_data'] ?? '')),
+                ], $biometrics),
+            ], JSON_THROW_ON_ERROR)),
+        ];
+    }
+
+    private function normalizeSyncScope(string $scope): string
+    {
+        return match (strtolower(trim($scope))) {
+            self::SCOPE_EMPLOYEES => self::SCOPE_EMPLOYEES,
+            self::SCOPE_FACE => self::SCOPE_FACE,
+            self::SCOPE_FINGERPRINT => self::SCOPE_FINGERPRINT,
+            default => self::SCOPE_FULL,
+        };
     }
 
     public function dispatchQueuedBatch(int $deviceSyncId): void
@@ -468,6 +726,8 @@ class UserSyncService
                         'data_size' => $biometric['data_size'] ?? null,
                         'is_valid' => $biometric['is_valid'] ?? null,
                         'template_data' => $biometric['template_data'] ?? null,
+                        'template_transport' => $biometric['template_transport'] ?? null,
+                        'face_upload_prefixed' => $biometric['face_upload_prefixed'] ?? null,
                     ],
                     $entry['employee_record_id'],
                     $biometricFingerprint,
@@ -614,6 +874,69 @@ class UserSyncService
         }
     }
 
+    private function reconcileReusableBatch(DeviceSync $sync): DeviceSync
+    {
+        $statuses = DeviceCommand::query()
+            ->where('device_sync_id', $sync->id)
+            ->pluck('status');
+
+        if ($statuses->isEmpty()) {
+            if ($sync->status === DeviceSync::STATUS_DISPATCHING) {
+                $sync->forceFill([
+                    'status' => DeviceSync::STATUS_QUEUED,
+                    'queued_records' => 0,
+                    'processed_records' => 0,
+                    'successful_records' => 0,
+                    'failed_records' => 0,
+                    'sync_started_at' => null,
+                    'sync_completed_at' => null,
+                ])->save();
+            }
+
+            return $sync->fresh();
+        }
+
+        $queuedRecords = $statuses->count();
+        $successfulRecords = $statuses->filter(
+            static fn (string $status): bool => $status === DeviceCommand::STATUS_DONE
+        )->count();
+        $failedRecords = $statuses->filter(
+            static fn (string $status): bool => $status === DeviceCommand::STATUS_FAILED
+        )->count();
+        $processedRecords = $successfulRecords + $failedRecords;
+
+        $attributes = [
+            'queued_records' => $queuedRecords,
+            'processed_records' => $processedRecords,
+            'successful_records' => $successfulRecords,
+            'failed_records' => $failedRecords,
+        ];
+
+        if ($processedRecords >= $queuedRecords) {
+            $attributes['sync_completed_at'] = $sync->sync_completed_at ?: now();
+            $attributes['status'] = $failedRecords > 0
+                ? DeviceSync::STATUS_COMPLETED_WITH_ERRORS
+                : DeviceSync::STATUS_COMPLETED;
+        } else {
+            $attributes['status'] = DeviceSync::STATUS_DISPATCHING;
+            $attributes['sync_started_at'] = $sync->sync_started_at ?: $sync->last_dispatched_at ?: now();
+            $attributes['sync_completed_at'] = null;
+        }
+
+        $sync->forceFill($attributes)->save();
+
+        if (($attributes['status'] ?? null) === DeviceSync::STATUS_COMPLETED) {
+            $sync->loadMissing('device');
+            $sync->device?->forceFill([
+                'last_user_sync_version' => $sync->version,
+                'last_user_sync_at' => now(),
+                'pending_full_resync' => false,
+            ])->save();
+        }
+
+        return $sync->fresh();
+    }
+
     private function buildBiometricSyncEntries(Employee $employee): array
     {
         return $employee->biometrics
@@ -647,6 +970,8 @@ class UserSyncService
                     'data_size' => $biometric->data_size ?: strlen($templateData),
                     'is_valid' => $biometric->is_valid,
                     'template_data' => $templateData,
+                    'template_transport' => $this->resolveBiometricTemplateTransport($biometric),
+                    'face_upload_prefixed' => $this->hasFaceUploadPrefix($biometric),
                 ];
             })
             ->filter()
@@ -669,6 +994,44 @@ class UserSyncService
             ]))
             ->values()
             ->all();
+    }
+
+    private function resolveBiometricTemplateTransport(EmployeeBiometric $biometric): ?string
+    {
+        $rawPayload = is_array($biometric->raw_payload) ? $biometric->raw_payload : [];
+
+        if (($rawPayload['source'] ?? null) === 'udp') {
+            return 'udp';
+        }
+
+        if (! empty($rawPayload['template_transport'])) {
+            return (string) $rawPayload['template_transport'];
+        }
+
+        if (array_key_exists('TMP', $rawPayload) || array_key_exists('Content', $rawPayload)) {
+            return 'adms_upload';
+        }
+
+        return null;
+    }
+
+    private function hasFaceUploadPrefix(EmployeeBiometric $biometric): bool
+    {
+        if ($biometric->biometric_type !== EmployeeBiometric::TYPE_FACE) {
+            return false;
+        }
+
+        $rawPayload = is_array($biometric->raw_payload) ? $biometric->raw_payload : [];
+
+        if (array_key_exists('face_upload_prefixed', $rawPayload)) {
+            return (bool) $rawPayload['face_upload_prefixed'];
+        }
+
+        if (($rawPayload['source'] ?? null) === 'udp') {
+            return false;
+        }
+
+        return false;
     }
 
     private function backfillBiometricEmployeeLinks(Collection $employees): int
@@ -836,25 +1199,5 @@ class UserSyncService
         ]);
     }
 
-    private function isLegacyMalformedEmployee(Employee $employee): bool
-    {
-        $employeeId = strtoupper((string) $employee->employee_id);
 
-        if (str_starts_with($employeeId, 'OPLOG')) {
-            return true;
-        }
-
-        $rawPayload = $employee->raw_payload ?? [];
-        $hasNumericEmployeeId = preg_match('/^[0-9]+$/', (string) $employee->employee_id) === 1;
-
-        return ! $hasNumericEmployeeId
-            && $employee->uid === null
-            && is_array($rawPayload)
-            && (
-                array_key_exists('Time', $rawPayload)
-                || array_key_exists('Status', $rawPayload)
-                || array_key_exists('Verify', $rawPayload)
-                || array_key_exists('WorkCode', $rawPayload)
-            );
-    }
 }

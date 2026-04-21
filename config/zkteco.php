@@ -62,6 +62,7 @@ return [
     'command_max_retries' => (int) env('ZKTECO_COMMAND_MAX_RETRIES', 3),
     'auto_pull_employees_on_contact' => env('ZKTECO_AUTO_PULL_EMPLOYEES_ON_CONTACT', true),
     'auto_pull_employees_cooldown_minutes' => (int) env('ZKTECO_AUTO_PULL_EMPLOYEES_COOLDOWN_MINUTES', 15),
+    'auto_cleanup_legacy_users' => env('ZKTECO_AUTO_CLEANUP_LEGACY_USERS', false),
     'system_timezone' => env('ZKTECO_SYSTEM_TIMEZONE'),
     'device_timezone' => env('ZKTECO_DEVICE_TIMEZONE', env('APP_TIMEZONE', 'UTC')),
     'option_timezone' => env('ZKTECO_OPTION_TIMEZONE'),
@@ -78,6 +79,12 @@ return [
     'option_realtime' => env('ZKTECO_OPTION_REALTIME', true),
     'option_encrypt' => env('ZKTECO_OPTION_ENCRYPT', false),
     'face_enrollment_type' => (int) env('ZKTECO_FACE_ENROLLMENT_TYPE', 2),
+    'delete_employee_commands' => array_values(array_filter([
+        env('ZKTECO_DELETE_EMPLOYEE_USERINFO_COMMAND', 'DATA DELETE USERINFO PIN={pin}'),
+        env('ZKTECO_DELETE_EMPLOYEE_FINGERPRINT_COMMAND', 'DATA DELETE FINGERTMP PIN={pin}'),
+        env('ZKTECO_DELETE_EMPLOYEE_FACE_COMMAND', 'DATA DELETE FACE PIN={pin}'),
+        env('ZKTECO_DELETE_EMPLOYEE_PHOTO_COMMAND', 'DATA DELETE USERPIC PIN={pin}'),
+    ], static fn ($value): bool => is_string($value) && trim($value) !== '')),
 
     'webhook' => [
         'url' => env('ZKTECO_WEBHOOK_URL'),

@@ -153,50 +153,36 @@ class ZKTecoCommandFormatter
 
     private function formatFingerprintCommand(DeviceCommand $command, string $pin, array $parameters): string
     {
+        $transfer = $this->prepareBinaryTransfer($parameters, 'fingerprint');
         $fields = [
             "PIN={$pin}",
             'FID='.$this->sanitize((string) ($parameters['template_index'] ?? '0')),
+            'Size='.$transfer['size'],
         ];
-
-        if (array_key_exists('data_size', $parameters) && $parameters['data_size'] !== null && $parameters['data_size'] !== '') {
-            $fields[] = 'Size='.(int) $parameters['data_size'];
-        }
 
         if (array_key_exists('is_valid', $parameters) && $parameters['is_valid'] !== null && $parameters['is_valid'] !== '') {
             $fields[] = 'Valid='.($parameters['is_valid'] ? '1' : '0');
         }
 
-        $templateData = $this->sanitize((string) ($parameters['template_data'] ?? ''));
-        if ($templateData === '') {
-            throw new \InvalidArgumentException('Fingerprint sync command requires template data');
-        }
-
-        $fields[] = "TMP={$templateData}";
+        $fields[] = "TMP={$transfer['data']}";
 
         return "C:{$command->id}:DATA UPDATE FINGERTMP ".implode("\t", $fields);
     }
 
     private function formatFaceCommand(DeviceCommand $command, string $pin, array $parameters): string
     {
+        $transfer = $this->prepareBinaryTransfer($parameters, 'face');
         $fields = [
             "PIN={$pin}",
             'FID='.$this->sanitize((string) ($parameters['template_index'] ?? '50')),
+            'Size='.$transfer['size'],
         ];
-
-        if (array_key_exists('data_size', $parameters) && $parameters['data_size'] !== null && $parameters['data_size'] !== '') {
-            $fields[] = 'Size='.(int) $parameters['data_size'];
-        }
 
         if (array_key_exists('is_valid', $parameters) && $parameters['is_valid'] !== null && $parameters['is_valid'] !== '') {
             $fields[] = 'Valid='.($parameters['is_valid'] ? '1' : '0');
         }
 
-        $templateData = $this->sanitize((string) ($parameters['template_data'] ?? ''));
-        if ($templateData === '') {
-            throw new \InvalidArgumentException('Face sync command requires template data');
-        }
-
-        $fields[] = "TMP={$templateData}";
+        $fields[] = "TMP={$transfer['data']}";
 
         return "C:{$command->id}:DATA UPDATE FACE ".implode("\t", $fields);
     }
@@ -204,22 +190,15 @@ class ZKTecoCommandFormatter
     private function formatPhotoCommand(DeviceCommand $command, string $pin, array $parameters): string
     {
         $fileName = $this->sanitize((string) ($parameters['file_name'] ?? "{$pin}.jpg"));
-        $templateData = $this->sanitize((string) ($parameters['template_data'] ?? ''));
-
-        if ($templateData === '') {
-            throw new \InvalidArgumentException('Photo sync command requires template data');
-        }
+        $transfer = $this->prepareBinaryTransfer($parameters, 'photo');
 
         $fields = [
             "PIN={$pin}",
             "FileName={$fileName}",
+            'Size='.$transfer['size'],
         ];
 
-        if (array_key_exists('data_size', $parameters) && $parameters['data_size'] !== null && $parameters['data_size'] !== '') {
-            $fields[] = 'Size='.(int) $parameters['data_size'];
-        }
-
-        $fields[] = "Content={$templateData}";
+        $fields[] = "Content={$transfer['data']}";
 
         return "C:{$command->id}:DATA UPDATE USERPIC ".implode("\t", $fields);
     }
@@ -279,6 +258,53 @@ class ZKTecoCommandFormatter
     private function sanitize(string $value): string
     {
         return str_replace(["\r", "\n", "\t"], ' ', trim($value));
+    }
+
+    private function prepareBinaryTransfer(array $parameters, string $type): array
+    {
+        $rawTemplate = trim((string) ($parameters['template_data'] ?? ''));
+        if ($rawTemplate === '') {
+            throw new \InvalidArgumentException(ucfirst($type).' sync command requires template data');
+        }
+
+        $transport = strtolower(trim((string) ($parameters['template_transport'] ?? '')));
+        $faceUploadPrefixed = $type === 'face'
+            && $this->normalizeBooleanParameter($parameters['face_upload_prefixed'] ?? false);
+
+        $normalizedTemplate = preg_replace('/\s+/', '', trim($rawTemplate)) ?? trim($rawTemplate);
+        $decoded = base64_decode($normalizedTemplate, true);
+
+        if ($faceUploadPrefixed && $decoded !== false && strlen($decoded) > 16) {
+            $encoded = base64_encode(substr($decoded, 16));
+
+            return [
+                'data' => $encoded,
+                'size' => strlen($encoded),
+            ];
+        }
+
+        if ($transport === 'udp') {
+            $encoded = base64_encode($decoded !== false ? $decoded : $rawTemplate);
+
+            return [
+                'data' => $encoded,
+                'size' => strlen($encoded),
+            ];
+        }
+
+        return [
+            'data' => $rawTemplate,
+            'size' => $this->resolveTransferSize($parameters, $rawTemplate),
+        ];
+    }
+
+    private function resolveTransferSize(array $parameters, string $payload): int
+    {
+        if (array_key_exists('data_size', $parameters) && $parameters['data_size'] !== null && $parameters['data_size'] !== '') {
+            return max(0, (int) $parameters['data_size']);
+        }
+
+        return strlen($payload);
     }
 
     private function normalizeBooleanParameter(mixed $value): bool

@@ -22,6 +22,8 @@ Route::prefix('admin')->name('admin.')->group(function () {
 
     Route::resource('employees', EmployeeController::class);
     Route::post('employees/{employee}/biometric-enrollment', [EmployeeController::class, 'enrollBiometric'])->name('employees.biometric-enrollment');
+    Route::get('employees/{employee}/biometric-enrollment-status/{command}', [EmployeeController::class, 'biometricEnrollmentStatus'])->name('employees.biometric-enrollment-status');
+    Route::post('employees/{employee}/push-biometrics', [EmployeeController::class, 'pushBiometrics'])->name('employees.push-biometrics');
     Route::prefix('credentials')->name('credentials.')->group(function () {
         Route::get('/', [CredentialController::class, 'index'])->name('index');
         Route::post('/', [CredentialController::class, 'store'])->name('store');

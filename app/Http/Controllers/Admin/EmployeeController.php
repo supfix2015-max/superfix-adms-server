@@ -4,13 +4,16 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\Device;
+use App\Models\DeviceCommand;
 use App\Models\Employee;
 use App\Repositories\EmployeeRepository;
+use App\Services\BiometricEnrollmentProgressService;
+use App\Services\BiometricSyncService;
 use App\Services\CommandService;
 use App\Services\EmployeeService;
 use App\Services\UserSyncService;
-use Illuminate\Support\Collection;
 use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
 
 class EmployeeController extends Controller
 {
@@ -19,6 +22,8 @@ class EmployeeController extends Controller
         protected EmployeeRepository $employeeRepository,
         protected UserSyncService $userSyncService,
         protected CommandService $commandService,
+        protected BiometricSyncService $biometricSyncService,
+        protected BiometricEnrollmentProgressService $biometricEnrollmentProgressService,
     ) {}
 
     public function index(Request $request)
@@ -97,10 +102,19 @@ class EmployeeController extends Controller
             ->orderBy('name')
             ->get();
 
+        $recentBiometricPushCommands = DeviceCommand::query()
+            ->with('device')
+            ->where('employee_id', $employee->id)
+            ->where('command', 'SYNC_BIOMETRICS')
+            ->latest('id')
+            ->limit(15)
+            ->get();
+
         return view('admin.employees.show', [
             'employee' => $employee,
             'onlineDevices' => $onlineDevices,
             'enrollmentPin' => $this->resolveEnrollmentPin($employee),
+            'recentBiometricPushCommands' => $recentBiometricPushCommands,
         ]);
     }
 
@@ -117,6 +131,12 @@ class EmployeeController extends Controller
         $device = Device::query()->findOrFail($validated['device_id']);
 
         if (! $device->isOnline()) {
+            if ($request->expectsJson()) {
+                return response()->json([
+                    'message' => "Device {$device->name} is not online. Remote biometric enrollment requires an actively polling device.",
+                ], 422);
+            }
+
             return back()->withErrors([
                 'enrollment' => "Device {$device->name} is not online. Remote biometric enrollment requires an actively polling device.",
             ]);
@@ -124,6 +144,12 @@ class EmployeeController extends Controller
 
         $pin = $this->resolveEnrollmentPin($employee);
         if ($pin === null) {
+            if ($request->expectsJson()) {
+                return response()->json([
+                    'message' => 'Employee must have a numeric device PIN/UID before remote biometric enrollment can be queued.',
+                ], 422);
+            }
+
             return back()->withErrors([
                 'enrollment' => 'Employee must have a numeric device PIN/UID before remote biometric enrollment can be queued.',
             ]);
@@ -133,26 +159,14 @@ class EmployeeController extends Controller
         $retry = (int) ($validated['retry'] ?? 3);
         $overwrite = $request->boolean('overwrite', true);
 
-        [$commandName, $parameters] = match ($biometricType) {
-            'fingerprint' => [
-                'ENROLL_FINGERPRINT',
-                [
-                    'pin' => $pin,
-                    'fid' => (string) ($validated['finger_index'] ?? 0),
-                    'retry' => $retry,
-                    'overwrite' => $overwrite,
-                ],
-            ],
-            'face' => [
-                'ENROLL_FACE',
-                array_filter([
-                    'pin' => $pin,
-                    'card_no' => $employee->card_no,
-                    'retry' => $retry,
-                    'overwrite' => $overwrite,
-                ], static fn ($value) => $value !== null && $value !== ''),
-            ],
-        };
+        [$commandName, $parameters] = $this->buildEnrollmentCommandPayload(
+            $employee,
+            $biometricType,
+            $pin,
+            $retry,
+            $overwrite,
+            $validated['finger_index'] ?? null,
+        );
 
         $command = $this->commandService->queueCommand(
             $device->id,
@@ -170,6 +184,23 @@ class EmployeeController extends Controller
             ]
         );
 
+        if ($request->expectsJson()) {
+            return response()->json([
+                'message' => sprintf(
+                    '%s enrollment queued for %s on %s.',
+                    ucfirst($biometricType),
+                    $employee->full_name,
+                    $device->name,
+                ),
+                'command_id' => $command->id,
+                'status_url' => route('admin.employees.biometric-enrollment-status', [
+                    'employee' => $employee,
+                    'command' => $command,
+                ]),
+                'status' => $this->biometricEnrollmentProgressService->forCommand($employee, $command),
+            ], 202);
+        }
+
         return redirect()
             ->route('admin.employees.show', $employee)
             ->with(
@@ -180,6 +211,63 @@ class EmployeeController extends Controller
                     $employee->full_name,
                     $device->name,
                     $command->id
+                )
+            );
+    }
+
+    public function biometricEnrollmentStatus(Employee $employee, DeviceCommand $command)
+    {
+        abort_unless($command->employee_id === $employee->id, 404);
+        abort_unless(in_array($command->command, ['ENROLL_FINGERPRINT', 'ENROLL_FACE'], true), 404);
+
+        return response()->json(
+            $this->biometricEnrollmentProgressService->forCommand($employee, $command)
+        );
+    }
+
+    public function pushBiometrics(Request $request, Employee $employee)
+    {
+        $validated = $request->validate([
+            'template_type' => 'required|in:all,fingerprint,face',
+            'overwrite' => 'nullable|boolean',
+            'online_only' => 'nullable|boolean',
+        ]);
+
+        try {
+            $summary = $this->biometricSyncService->queueAdmsReplay($employee, [
+                'template_types' => [$validated['template_type']],
+                'overwrite' => $request->boolean('overwrite', true),
+                'online_only' => $request->boolean('online_only', true),
+            ]);
+        } catch (\Throwable $exception) {
+            return back()->withErrors([
+                'push_biometrics' => $exception->getMessage(),
+            ]);
+        }
+
+        if (($summary['queued_commands'] ?? 0) === 0) {
+            $warningText = $summary['warnings'] !== []
+                ? ' '.implode(' ', $summary['warnings'])
+                : '';
+
+            return back()->withErrors([
+                'push_biometrics' => 'No compatible target devices were available for the selected biometric replay.'.$warningText,
+            ]);
+        }
+
+        $warningText = $summary['warnings'] !== []
+            ? ' Warnings: '.implode(' ', $summary['warnings'])
+            : '';
+
+        return redirect()
+            ->route('admin.employees.show', $employee)
+            ->with(
+                'success',
+                sprintf(
+                    'Queued %d ADMS biometric replay command(s) for %d target device(s).%s',
+                    $summary['queued_commands'],
+                    $summary['queued_targets'],
+                    $warningText,
                 )
             );
     }
@@ -227,10 +315,20 @@ class EmployeeController extends Controller
 
     public function destroy(Employee $employee)
     {
-        $this->employeeService->deleteEmployee($employee->id);
+        $summary = $this->employeeService->deleteEmployee($employee->id);
+
+        $message = sprintf(
+            'Employee deleted from the database. Queued %d cleanup command(s) for %d device(s).',
+            $summary['queued_device_commands'],
+            $summary['device_targets'],
+        );
+
+        if ($summary['deleted_pending_commands'] > 0) {
+            $message .= sprintf(' Removed %d pending employee command(s).', $summary['deleted_pending_commands']);
+        }
 
         return redirect()->route('admin.employees.index')
-            ->with('success', 'Employee deleted successfully');
+            ->with('success', $message);
     }
 
     private function prepareEmployeePayload(array $validated): array
@@ -253,6 +351,40 @@ class EmployeeController extends Controller
     private function refreshSyncSafety(Employee $employee): void
     {
         $this->userSyncService->refreshDeviceSafeDataset(new Collection([$employee->fresh()]));
+    }
+
+    private function buildEnrollmentCommandPayload(
+        Employee $employee,
+        string $biometricType,
+        string $pin,
+        int $retry,
+        bool $overwrite,
+        mixed $fingerIndex,
+    ): array {
+        return match ($biometricType) {
+            'fingerprint' => [
+                'ENROLL_FINGERPRINT',
+                [
+                    'pin' => $pin,
+                    'fid' => (string) ($fingerIndex ?? 0),
+                    'retry' => $retry,
+                    'overwrite' => $overwrite,
+                    'biometric_type' => 'fingerprint',
+                    'template_index' => (string) ($fingerIndex ?? 0),
+                ],
+            ],
+            'face' => [
+                'ENROLL_FACE',
+                array_filter([
+                    'pin' => $pin,
+                    'card_no' => $employee->card_no,
+                    'retry' => $retry,
+                    'overwrite' => $overwrite,
+                    'biometric_type' => 'face',
+                    'template_index' => '50',
+                ], static fn ($value) => $value !== null && $value !== ''),
+            ],
+        };
     }
 
     private function normalizeOptionalString(?string $value): ?string

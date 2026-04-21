@@ -16,14 +16,18 @@ class UserSyncController extends Controller
 
     public function store(Request $request): JsonResponse
     {
+        $scope = (string) $request->input('scope', UserSyncService::SCOPE_FULL);
+
         try {
             $result = $this->userSyncService->queueGlobalUserSync(
                 $request->boolean('force'),
-                'employee_page_ajax'
+                'employee_page_ajax',
+                $scope,
             );
         } catch (\Throwable $exception) {
             Log::error('adms.user_sync.queue_failed', [
                 'user_id' => $request->user()?->id,
+                'scope' => $scope,
                 'exception' => $exception->getMessage(),
             ]);
 
@@ -36,6 +40,7 @@ class UserSyncController extends Controller
         if ($result['summary']['active_device_count'] === 0) {
             Log::warning('adms.user_sync.no_active_devices', [
                 'user_id' => $request->user()?->id,
+                'scope' => $result['summary']['scope'] ?? $scope,
             ]);
 
             return response()->json([
@@ -45,15 +50,27 @@ class UserSyncController extends Controller
             ], 422);
         }
 
-        if ($result['summary']['safe_user_count'] === 0) {
-            Log::warning('adms.user_sync.no_safe_users', [
+        if (($result['summary']['matching_user_count'] ?? 0) === 0) {
+            $normalizedScope = (string) ($result['summary']['scope'] ?? $scope);
+            $error = match ($normalizedScope) {
+                UserSyncService::SCOPE_FACE => 'no_face_templates',
+                UserSyncService::SCOPE_FINGERPRINT => 'no_fingerprint_templates',
+                default => 'no_sync_safe_users',
+            };
+            $message = match ($normalizedScope) {
+                UserSyncService::SCOPE_FACE => 'No employees with face templates are available for device sync.',
+                UserSyncService::SCOPE_FINGERPRINT => 'No employees with fingerprint templates are available for device sync.',
+                default => 'No sync-safe users are available for device sync.',
+            };
+
+            Log::warning('adms.user_sync.no_matching_records', [
                 'user_id' => $request->user()?->id,
                 'summary' => $result['summary'],
             ]);
 
             return response()->json([
-                'message' => 'No sync-safe users are available for device sync.',
-                'error' => 'no_sync_safe_users',
+                'message' => $message,
+                'error' => $error,
                 'summary' => $result['summary'],
             ], 422);
         }
@@ -64,14 +81,17 @@ class UserSyncController extends Controller
             'summary' => $result['summary'],
         ]);
 
+        $scopeLabel = $this->userSyncService->syncScopeLabel($result['summary']['scope'] ?? $scope);
         $message = $result['summary']['new_batch_count'] > 0
             ? sprintf(
-                'Queued %d user and biometric sync batch(es) for %d active device(s).',
+                'Queued %d %s sync batch(es) for %d active device(s).',
                 $result['summary']['new_batch_count'],
+                $scopeLabel,
                 $result['summary']['active_device_count'],
             )
             : sprintf(
-                'User and biometric sync was already queued for %d active device(s).',
+                '%s sync was already queued for %d active device(s).',
+                ucfirst($scopeLabel),
                 $result['summary']['active_device_count'],
             );
 

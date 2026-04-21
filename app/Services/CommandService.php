@@ -5,9 +5,11 @@ namespace App\Services;
 use App\Models\Device;
 use App\Models\DeviceCommand;
 use App\Models\DeviceSync;
+use App\Models\ErrorLog;
 use App\Repositories\DeviceCommandRepository;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class CommandService
 {
@@ -187,6 +189,8 @@ class CommandService
         if (! $wasTerminal) {
             $this->updateSyncBatchProgress($command);
         }
+
+        $this->recordBiometricReplayAudit($command, $successful);
     }
 
     public function recoverFailedCommands(): int
@@ -334,5 +338,74 @@ class CommandService
                 'pending_full_resync' => false,
             ])->save();
         }
+    }
+
+    private function recordBiometricReplayAudit(DeviceCommand $command, bool $successful): void
+    {
+        if ($command->command !== 'SYNC_BIOMETRICS') {
+            return;
+        }
+
+        $command->loadMissing(['device', 'employee']);
+        $responsePayload = is_array($command->response_payload) ? $command->response_payload : [];
+
+        $employeeCode = $command->employee?->employee_id
+            ?: (string) ($command->parameters['employee_code'] ?? $command->parameters['pin'] ?? 'unknown');
+        $deviceName = $command->device?->name ?? 'Unknown device';
+        $deviceId = $command->device_id;
+        $templateType = (string) ($command->parameters['biometric_type'] ?? 'unknown');
+        $templateIndex = (string) ($command->parameters['template_index'] ?? '-');
+        $reason = (string) ($command->error_message ?: ($responsePayload['Message'] ?? $responsePayload['Error'] ?? 'Device rejected biometric replay.'));
+        $messagePrefix = sprintf(
+            'Biometric replay rejected for employee %s on device %s. Type=%s. Slot=%s.',
+            $employeeCode,
+            $deviceName,
+            $templateType,
+            $templateIndex,
+        );
+
+        if ($successful) {
+            Log::info('adms.biometric_replay.accepted', [
+                'command_id' => $command->id,
+                'device_id' => $deviceId,
+                'employee_code' => $employeeCode,
+                'biometric_type' => $templateType,
+                'template_index' => $templateIndex,
+                'return' => $responsePayload['Return'] ?? null,
+            ]);
+
+            ErrorLog::query()
+                ->where('device_id', $deviceId)
+                ->where('type', 'queue_error')
+                ->where('error_code', 'BIOMETRIC_PUSH_REJECTED')
+                ->where('resolved', false)
+                ->where('message', 'like', $messagePrefix.'%')
+                ->update(['resolved' => true]);
+
+            return;
+        }
+
+        Log::warning('adms.biometric_replay.rejected', [
+            'command_id' => $command->id,
+            'device_id' => $deviceId,
+            'employee_code' => $employeeCode,
+            'biometric_type' => $templateType,
+            'template_index' => $templateIndex,
+            'reason' => $reason,
+            'response_payload' => $responsePayload,
+        ]);
+
+        ErrorLog::query()->updateOrCreate(
+            [
+                'device_id' => $deviceId,
+                'type' => 'queue_error',
+                'error_code' => 'BIOMETRIC_PUSH_REJECTED',
+                'message' => $messagePrefix.' Reason='.$reason,
+            ],
+            [
+                'severity' => 'high',
+                'resolved' => false,
+            ],
+        );
     }
 }

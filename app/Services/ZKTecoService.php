@@ -211,10 +211,14 @@ class ZKTecoService
             return $this->storeAttendanceLogs($device, $context, $attendancePayload);
         }
 
-        $userPayload = $this->payloadParser->parseUserPayload($context['raw_body']);
+        $acceptUserPayload = $this->shouldSyncUsersFromContext($context);
+        $parsedUserPayload = $this->payloadParser->parseUserPayload($context['raw_body']);
+        $userPayload = $acceptUserPayload
+            ? $parsedUserPayload
+            : ['records' => [], 'errors' => []];
         $biometricPayload = $this->payloadParser->parseBiometricPayload($context['raw_body']);
 
-        if ($userPayload['records'] !== [] && $biometricPayload['records'] !== []) {
+        if ($acceptUserPayload && $userPayload['records'] !== [] && $biometricPayload['records'] !== []) {
             $userResult = $this->syncUsers($device, $context, $userPayload);
             $biometricResult = $this->storeBiometrics($device, $context, $biometricPayload);
             $warnings = array_values(array_unique(array_merge($userResult['warnings'], $biometricResult['warnings'])));
@@ -233,7 +237,7 @@ class ZKTecoService
             ];
         }
 
-        if ($userPayload['records'] !== []) {
+        if ($acceptUserPayload && $userPayload['records'] !== []) {
             return $this->syncUsers($device, $context, $userPayload);
         }
 
@@ -241,7 +245,31 @@ class ZKTecoService
             return $this->storeBiometrics($device, $context, $biometricPayload);
         }
 
+        if (! $acceptUserPayload && $parsedUserPayload['records'] !== []) {
+            return [
+                'type' => 'ignored_userinfo',
+                'count' => 0,
+                'warnings' => ['Ignored employee payload from OPERLOG; only USERINFO uploads create employees.'],
+                'metadata' => [
+                    'table' => $context['table'] ?? 'OPERLOG',
+                    'warnings' => ['ignored_operlog_user_payload'],
+                ],
+                'response' => "OK:0\r\n",
+            ];
+        }
+
         return $this->mergeDeviceMetadata($device, $context);
+    }
+
+    private function shouldSyncUsersFromContext(array $context): bool
+    {
+        $table = strtoupper(trim((string) ($context['table'] ?? '')));
+
+        if ($table === '') {
+            return true;
+        }
+
+        return $table === 'USERINFO';
     }
 
     private function buildContext(Request $request, string $endpoint): array
@@ -485,6 +513,7 @@ class ZKTecoService
 
         $warnings = $parsed['errors'];
         $preparedRecords = collect();
+        $ignoredLegacyCodes = [];
 
         foreach ($parsed['records'] as $record) {
             $logTime = $this->payloadParser->normalizeTimestamp($record['timestamp'] ?? null);
@@ -498,6 +527,17 @@ class ZKTecoService
             $employeeCode = trim((string) ($record['employee_code'] ?? ''));
             if ($employeeCode === '') {
                 $warnings[] = 'Skipped attendance row without employee code';
+
+                continue;
+            }
+
+            if ($this->userSyncService->isLegacyOperationLogRecord(
+                $employeeCode,
+                $record['name'] ?? null,
+                is_array($record['raw'] ?? null) ? $record['raw'] : [],
+            )) {
+                $ignoredLegacyCodes[] = strtoupper($employeeCode);
+                $warnings[] = sprintf('Ignored legacy OPLOG attendance row for %s', $employeeCode);
 
                 continue;
             }
@@ -521,7 +561,20 @@ class ZKTecoService
         }
 
         if ($preparedRecords->isEmpty()) {
-            throw new \InvalidArgumentException('No valid attendance records found');
+            if ($ignoredLegacyCodes !== []) {
+                $this->userSyncService->purgeLegacyOperationLogArtifacts(array_values(array_unique($ignoredLegacyCodes)));
+            }
+
+            return [
+                'type' => 'attendance',
+                'count' => 0,
+                'warnings' => array_values(array_unique($warnings)),
+                'metadata' => [
+                    'table' => 'ATTLOG',
+                    'warnings' => $warnings,
+                ],
+                'response' => "OK:0\r\n",
+            ];
         }
 
         $newHashes = [];
@@ -590,6 +643,10 @@ class ZKTecoService
                 $newHashes = $rows->pluck('payload_hash')->all();
             }
         });
+
+        if ($ignoredLegacyCodes !== []) {
+            $this->userSyncService->purgeLegacyOperationLogArtifacts(array_values(array_unique($ignoredLegacyCodes)));
+        }
 
         $device->forceFill(['last_sync' => now()])->save();
         $this->markDatasetPullCommandDone($device, 'PULL_ATTENDANCE', sprintf('ATTLOG received via /iclock/cdata (%d records)', count($newHashes)));

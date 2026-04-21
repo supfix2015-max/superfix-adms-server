@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\Device;
 use App\Models\Employee;
+use App\Services\BiometricEnrollmentProgressService;
 use App\Services\CommandService;
 use App\Services\UserSyncService;
 use Illuminate\Http\RedirectResponse;
@@ -21,6 +22,7 @@ class CredentialController extends Controller
     public function __construct(
         protected UserSyncService $userSyncService,
         protected CommandService $commandService,
+        protected BiometricEnrollmentProgressService $biometricEnrollmentProgressService,
     ) {}
 
     public function index()
@@ -112,7 +114,7 @@ class CredentialController extends Controller
         return redirect()->to(route('admin.credentials.index').'#no-credential');
     }
 
-    public function enrollBiometric(Request $request): RedirectResponse
+    public function enrollBiometric(Request $request)
     {
         $validated = $request->validate([
             'enrollment_employee_id' => ['required', 'integer', 'exists:employees,id'],
@@ -127,6 +129,12 @@ class CredentialController extends Controller
         $device = Device::query()->findOrFail($validated['enrollment_device_id']);
 
         if (! $device->isOnline()) {
+            if ($request->expectsJson()) {
+                return response()->json([
+                    'message' => "Device {$device->name} is not online. Remote biometric enrollment requires an actively polling device.",
+                ], 422);
+            }
+
             return redirect()
                 ->to(route('admin.credentials.index').'#biometric-enrollment')
                 ->withInput()
@@ -137,6 +145,12 @@ class CredentialController extends Controller
 
         $pin = $this->resolveEnrollmentPin($employee);
         if ($pin === null) {
+            if ($request->expectsJson()) {
+                return response()->json([
+                    'message' => 'Employee must have a numeric device PIN/UID before remote biometric enrollment can be queued.',
+                ], 422);
+            }
+
             return redirect()
                 ->to(route('admin.credentials.index').'#biometric-enrollment')
                 ->withInput()
@@ -149,26 +163,14 @@ class CredentialController extends Controller
         $retry = (int) ($validated['retry'] ?? 3);
         $overwrite = $request->boolean('overwrite', true);
 
-        [$commandName, $parameters] = match ($biometricType) {
-            'fingerprint' => [
-                'ENROLL_FINGERPRINT',
-                [
-                    'pin' => $pin,
-                    'fid' => (string) ($validated['finger_index'] ?? 0),
-                    'retry' => $retry,
-                    'overwrite' => $overwrite,
-                ],
-            ],
-            'face' => [
-                'ENROLL_FACE',
-                array_filter([
-                    'pin' => $pin,
-                    'card_no' => $employee->card_no,
-                    'retry' => $retry,
-                    'overwrite' => $overwrite,
-                ], static fn ($value) => $value !== null && $value !== ''),
-            ],
-        };
+        [$commandName, $parameters] = $this->buildEnrollmentCommandPayload(
+            $employee,
+            $biometricType,
+            $pin,
+            $retry,
+            $overwrite,
+            $validated['finger_index'] ?? null,
+        );
 
         $command = $this->commandService->queueCommand(
             $device->id,
@@ -185,6 +187,23 @@ class CredentialController extends Controller
                 'force' => true,
             ]
         );
+
+        if ($request->expectsJson()) {
+            return response()->json([
+                'message' => sprintf(
+                    '%s enrollment queued for %s on %s.',
+                    ucfirst($biometricType),
+                    $employee->full_name,
+                    $device->name,
+                ),
+                'command_id' => $command->id,
+                'status_url' => route('admin.employees.biometric-enrollment-status', [
+                    'employee' => $employee,
+                    'command' => $command,
+                ]),
+                'status' => $this->biometricEnrollmentProgressService->forCommand($employee, $command),
+            ], 202);
+        }
 
         return redirect()
             ->to(route('admin.credentials.index').'#biometric-enrollment')
@@ -338,6 +357,40 @@ class CredentialController extends Controller
     private function refreshSyncSafety(Employee $employee): void
     {
         $this->userSyncService->refreshDeviceSafeDataset(new Collection([$employee->fresh()]));
+    }
+
+    private function buildEnrollmentCommandPayload(
+        Employee $employee,
+        string $biometricType,
+        string $pin,
+        int $retry,
+        bool $overwrite,
+        mixed $fingerIndex,
+    ): array {
+        return match ($biometricType) {
+            'fingerprint' => [
+                'ENROLL_FINGERPRINT',
+                [
+                    'pin' => $pin,
+                    'fid' => (string) ($fingerIndex ?? 0),
+                    'retry' => $retry,
+                    'overwrite' => $overwrite,
+                    'biometric_type' => 'fingerprint',
+                    'template_index' => (string) ($fingerIndex ?? 0),
+                ],
+            ],
+            'face' => [
+                'ENROLL_FACE',
+                array_filter([
+                    'pin' => $pin,
+                    'card_no' => $employee->card_no,
+                    'retry' => $retry,
+                    'overwrite' => $overwrite,
+                    'biometric_type' => 'face',
+                    'template_index' => '50',
+                ], static fn ($value) => $value !== null && $value !== ''),
+            ],
+        };
     }
 
     private function resolveEnrollmentPin(Employee $employee): ?string

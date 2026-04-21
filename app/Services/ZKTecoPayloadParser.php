@@ -454,6 +454,7 @@ class ZKTecoPayloadParser
             'FP PIN',
             'FACE PIN',
             'USERPIC PIN',
+            'BIODATA PIN',
             'PIN',
         ]));
 
@@ -499,6 +500,10 @@ class ZKTecoPayloadParser
 
             if (str_starts_with($key, 'userpic pin')) {
                 return 'photo';
+            }
+
+            if (str_starts_with($key, 'biodata pin')) {
+                return 'fingerprint';
             }
         }
 

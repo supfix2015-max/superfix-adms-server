@@ -1005,6 +1005,8 @@ class BiometricTemplateSyncService
                 'data_size' => $template->data_size ?: strlen((string) $template->template_data),
                 'is_valid' => $template->is_valid,
                 'template_data' => $template->template_data,
+                'template_transport' => $this->resolveTemplateTransport($template),
+                'face_upload_prefixed' => $this->hasFaceUploadPrefix($template),
             ], static fn ($value) => $value !== null && $value !== ''),
             "Cross-device biometric sync for employee {$employee->employee_id}",
             [
@@ -1070,10 +1072,50 @@ class BiometricTemplateSyncService
                     'source_device_id' => $template->device_id,
                     'mirrored_from_sync' => true,
                     'sync_state' => $syncState,
+                    'template_transport' => $this->resolveTemplateTransport($template),
+                    'face_upload_prefixed' => $this->hasFaceUploadPrefix($template),
                     'synced_at' => now()->toIso8601String(),
                 ],
             ]
         );
+    }
+
+    private function resolveTemplateTransport(EmployeeBiometric $template): ?string
+    {
+        $rawPayload = is_array($template->raw_payload) ? $template->raw_payload : [];
+
+        if (($rawPayload['source'] ?? null) === 'udp') {
+            return 'udp';
+        }
+
+        if (! empty($rawPayload['template_transport'])) {
+            return (string) $rawPayload['template_transport'];
+        }
+
+        if (array_key_exists('TMP', $rawPayload) || array_key_exists('Content', $rawPayload)) {
+            return 'adms_upload';
+        }
+
+        return null;
+    }
+
+    private function hasFaceUploadPrefix(EmployeeBiometric $template): bool
+    {
+        if ($template->biometric_type !== EmployeeBiometric::TYPE_FACE) {
+            return false;
+        }
+
+        $rawPayload = is_array($template->raw_payload) ? $template->raw_payload : [];
+
+        if (array_key_exists('face_upload_prefixed', $rawPayload)) {
+            return (bool) $rawPayload['face_upload_prefixed'];
+        }
+
+        if (($rawPayload['source'] ?? null) === 'udp') {
+            return false;
+        }
+
+        return false;
     }
 
     private function recordReenrollFallback(Device $target, Employee $employee, EmployeeBiometric $template, string $reason, string $fallback): void

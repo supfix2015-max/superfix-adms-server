@@ -11,9 +11,13 @@ use App\Models\ErrorLog;
 use App\Models\User;
 use App\Notifications\AdminBiometricSyncFailureNotification;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 
 class BiometricSyncService
 {
+    public const PUSH_TYPE_ALL = 'all';
+
     private const LEGACY_CMD_USERTEMP_RRQ = 0x09;
 
     private const LEGACY_CMD_USERTEMP_WRQ = 0x0A;
@@ -22,8 +26,156 @@ class BiometricSyncService
         protected CommandService $commandService,
     ) {}
 
+    public function queueAdmsReplay(Employee $employee, array $options = []): array
+    {
+        $options = array_merge([
+            'source_device' => null,
+            'sync_keys' => [],
+            'template_types' => [BiometricTemplate::TYPE_FINGERPRINT, BiometricTemplate::TYPE_FACE],
+            'overwrite' => true,
+            'online_only' => true,
+            'target_device_ids' => [],
+        ], $options);
+
+        $employee->loadMissing('device');
+
+        $sourceDevice = $options['source_device'] instanceof Device
+            ? $options['source_device']
+            : $this->resolveSourceDevice($employee);
+
+        $templateTypes = $this->normalizeTemplateTypes((array) $options['template_types']);
+        $templates = $this->loadAdmsReplayTemplates(
+            $employee,
+            $sourceDevice,
+            $templateTypes,
+            (array) $options['sync_keys'],
+        );
+
+        if ($templates->isEmpty()) {
+            throw new \RuntimeException(
+                "No matching biometric templates are stored locally for employee {$employee->employee_id}."
+            );
+        }
+
+        $targets = $this->resolveAdmsReplayTargets(
+            $sourceDevice,
+            (bool) $options['online_only'],
+            array_map('intval', (array) $options['target_device_ids']),
+        );
+
+        if ($targets->isEmpty()) {
+            $scopeLabel = $options['online_only'] ? 'online' : 'active';
+            throw new \RuntimeException("No {$scopeLabel} target devices are available for biometric replay.");
+        }
+
+        $summarySourceDevice = $sourceDevice ?: $templates->first()?->device;
+
+        $summary = [
+            'employee_id' => $employee->employee_id,
+            'source_device' => $summarySourceDevice?->ip_address,
+            'template_count' => $templates->count(),
+            'target_device_count' => $targets->count(),
+            'queued_targets' => 0,
+            'queued_commands' => 0,
+            'skipped' => 0,
+            'warnings' => [],
+            'targets' => [],
+        ];
+
+        foreach ($targets as $target) {
+            $targetQueued = 0;
+            $employeeQueued = false;
+            $targetWarnings = [];
+            $targetTemplates = [];
+
+            foreach ($templates as $template) {
+                $compatibility = $this->validateDeviceCompatibility($template->device ?: $summarySourceDevice ?: $target, $target);
+                $targetWarnings = array_values(array_unique(array_merge($targetWarnings, (array) ($compatibility['warnings'] ?? []))));
+                $rule = $template->template_type === BiometricTemplate::TYPE_FACE
+                    ? $compatibility['face']
+                    : $compatibility['fingerprint'];
+
+                if (! ($rule['compatible'] ?? false)) {
+                    $summary['skipped']++;
+                    $reason = (string) ($rule['reason'] ?? 'Template type is not compatible with the target device.');
+                    $this->flagSyncFailure($template, $target, $reason);
+                    $targetTemplates[] = [
+                        'type' => $template->template_type,
+                        'slot' => $template->template_index,
+                        'status' => 'skipped',
+                        'reason' => $reason,
+                    ];
+                    continue;
+                }
+
+                if (! $employeeQueued) {
+                    $this->queueAdmsEmployeePrecondition($target, $employee);
+                    $employeeQueued = true;
+                    $targetQueued++;
+                }
+
+                $this->queueAdmsBiometricReplayCommand($target, $employee, $template, (bool) $options['overwrite']);
+                $targetQueued++;
+                $targetTemplates[] = [
+                    'type' => $template->template_type,
+                    'slot' => $template->template_index,
+                    'status' => 'queued',
+                ];
+            }
+
+            if ($targetQueued > 0) {
+                $summary['queued_targets']++;
+                $summary['queued_commands'] += $targetQueued;
+            }
+
+            $summary['targets'][] = [
+                'device_id' => $target->id,
+                'device_name' => $target->name,
+                'queued_commands' => $targetQueued,
+                'templates' => $targetTemplates,
+                'warnings' => $targetWarnings,
+            ];
+
+            foreach ($targetWarnings as $warning) {
+                $summary['warnings'][] = "{$target->name}: {$warning}";
+            }
+        }
+
+        $summary['warnings'] = array_values(array_unique($summary['warnings']));
+
+        Log::info('adms.biometric_replay.queued', [
+            'employee_id' => $employee->id,
+            'employee_code' => $employee->employee_id,
+            'template_count' => $summary['template_count'],
+            'target_device_count' => $summary['target_device_count'],
+            'queued_commands' => $summary['queued_commands'],
+            'online_only' => (bool) $options['online_only'],
+            'template_types' => $templateTypes,
+        ]);
+
+        return $summary;
+    }
+
     public function syncEmployeeTemplates(Employee $employee, array $options = []): array
     {
+        if (! $this->hasEncryptedTemplateStore()) {
+            Log::warning('Biometric sync skipped because biometric_templates table is missing.', [
+                'employee_id' => $employee->id,
+                'employee_code' => $employee->employee_id,
+            ]);
+
+            return [
+                'employee_id' => $employee->employee_id,
+                'source_device' => $employee->device?->ip_address,
+                'template_count' => 0,
+                'jobs_dispatched' => 0,
+                'skipped' => 0,
+                'warnings' => [
+                    'Automatic biometric sync is disabled until the biometric_templates migration is applied.',
+                ],
+            ];
+        }
+
         $options = array_merge([
             'source_device' => null,
             'sync_keys' => [],
@@ -478,6 +630,14 @@ class BiometricSyncService
 
     private function queueAdmsTemplatePush(Device $targetDevice, Employee $employee, BiometricTemplate $template, bool $overwrite): array
     {
+        $this->queueAdmsEmployeePrecondition($targetDevice, $employee);
+        $this->queueAdmsBiometricReplayCommand($targetDevice, $employee, $template, $overwrite);
+
+        return ['status' => 'queued_adms'];
+    }
+
+    private function queueAdmsEmployeePrecondition(Device $targetDevice, Employee $employee): void
+    {
         $pin = $this->resolveNumericPin($employee);
         if ($pin === null) {
             throw new \RuntimeException("Employee {$employee->employee_id} has no numeric device PIN.");
@@ -500,12 +660,24 @@ class BiometricSyncService
                 'valid_from' => $employee->valid_from,
                 'valid_until' => $employee->valid_until,
             ], static fn ($value) => $value !== null && $value !== ''),
-            "Biometric sync precondition for employee {$employee->employee_id}",
+            "ADMS biometric replay precondition for employee {$employee->employee_id}",
             [
                 'employee_id' => $employee->id,
-                'force' => $overwrite,
+                'force' => false,
             ]
         );
+    }
+
+    private function queueAdmsBiometricReplayCommand(
+        Device $targetDevice,
+        Employee $employee,
+        BiometricTemplate $template,
+        bool $overwrite,
+    ): void {
+        $pin = $this->resolveNumericPin($employee);
+        if ($pin === null) {
+            throw new \RuntimeException("Employee {$employee->employee_id} has no numeric device PIN.");
+        }
 
         $this->commandService->queueCommand(
             $targetDevice->id,
@@ -518,15 +690,15 @@ class BiometricSyncService
                 'data_size' => $template->data_size ?: strlen((string) $template->template_data),
                 'is_valid' => true,
                 'template_data' => $template->template_data,
+                'template_transport' => $this->resolveTemplateTransportFromMetadata($template->metadata),
+                'face_upload_prefixed' => $this->hasFaceUploadPrefixInMetadata($template->template_type, $template->metadata),
             ], static fn ($value) => $value !== null && $value !== ''),
-            "ADMS biometric sync for employee {$employee->employee_id}",
+            "ADMS biometric replay for employee {$employee->employee_id}",
             [
                 'employee_id' => $employee->id,
                 'force' => $overwrite,
             ]
         );
-
-        return ['status' => 'queued_adms'];
     }
 
     private function normalizeUdpFingerprintTemplate(mixed $rawTemplate, int $fingerIndex): ?array
@@ -593,13 +765,15 @@ class BiometricSyncService
 
     private function resolveSourceDevice(Employee $employee): ?Device
     {
-        $latestTemplateDeviceId = BiometricTemplate::query()
-            ->where('employee_id', $employee->id)
-            ->latest('updated_at')
-            ->value('device_id');
+        if ($this->hasEncryptedTemplateStore()) {
+            $latestTemplateDeviceId = BiometricTemplate::query()
+                ->where('employee_id', $employee->id)
+                ->latest('updated_at')
+                ->value('device_id');
 
-        if ($latestTemplateDeviceId) {
-            return Device::query()->find($latestTemplateDeviceId);
+            if ($latestTemplateDeviceId) {
+                return Device::query()->find($latestTemplateDeviceId);
+            }
         }
 
         $latestAdmsBiometricDeviceId = EmployeeBiometric::query()
@@ -794,5 +968,135 @@ class BiometricSyncService
         }
 
         return null;
+    }
+
+    private function hasEncryptedTemplateStore(): bool
+    {
+        return Schema::hasTable('biometric_templates');
+    }
+
+    private function normalizeTemplateTypes(array $templateTypes): array
+    {
+        $normalized = collect($templateTypes)
+            ->map(static fn (mixed $type): string => strtolower(trim((string) $type)))
+            ->filter(static fn (string $type): bool => in_array($type, [
+                BiometricTemplate::TYPE_FINGERPRINT,
+                BiometricTemplate::TYPE_FACE,
+                self::PUSH_TYPE_ALL,
+            ], true))
+            ->values();
+
+        if ($normalized->contains(self::PUSH_TYPE_ALL) || $normalized->isEmpty()) {
+            return [BiometricTemplate::TYPE_FINGERPRINT, BiometricTemplate::TYPE_FACE];
+        }
+
+        return $normalized->unique()->all();
+    }
+
+    private function resolveAdmsReplayTargets(?Device $sourceDevice, bool $onlineOnly, array $targetDeviceIds): Collection
+    {
+        return Device::query()
+            ->when($onlineOnly, fn ($query) => $query->online(), fn ($query) => $query->active())
+            ->when($targetDeviceIds !== [], fn ($query) => $query->whereIn('id', $targetDeviceIds))
+            ->when($sourceDevice, fn ($query) => $query->whereKeyNot($sourceDevice->id))
+            ->orderBy('name')
+            ->get();
+    }
+
+    private function loadAdmsReplayTemplates(
+        Employee $employee,
+        ?Device $sourceDevice,
+        array $templateTypes,
+        array $syncKeys = [],
+    ): Collection {
+        $query = EmployeeBiometric::query()
+            ->with('device')
+            ->where('employee_id', $employee->id)
+            ->whereIn('biometric_type', $templateTypes)
+            ->when($sourceDevice, fn ($builder) => $builder->where('device_id', $sourceDevice->id))
+            ->when($syncKeys !== [], fn ($builder) => $builder->whereIn('sync_key', $syncKeys))
+            ->orderByDesc('updated_at');
+
+        $rows = $query->get();
+
+        if ($rows->isEmpty() && $sourceDevice) {
+            $rows = EmployeeBiometric::query()
+                ->with('device')
+                ->where('employee_id', $employee->id)
+                ->whereIn('biometric_type', $templateTypes)
+                ->when($syncKeys !== [], fn ($builder) => $builder->whereIn('sync_key', $syncKeys))
+                ->orderByDesc('updated_at')
+                ->get();
+        }
+
+        return $rows
+            ->filter(static fn (EmployeeBiometric $biometric): bool => trim((string) $biometric->template_data) !== '')
+            ->map(function (EmployeeBiometric $biometric) use ($employee, $sourceDevice): BiometricTemplate {
+                $templateType = strtolower((string) $biometric->biometric_type);
+                $templateIndex = $biometric->template_index ?: ($templateType === BiometricTemplate::TYPE_FACE ? '50' : '0');
+
+                $template = new BiometricTemplate([
+                    'employee_id' => $employee->id,
+                    'device_id' => $biometric->device_id ?: $sourceDevice?->id,
+                    'template_type' => $templateType,
+                    'template_index' => (string) $templateIndex,
+                    'finger_index' => $templateType === BiometricTemplate::TYPE_FINGERPRINT
+                        ? (int) ($biometric->template_index ?? 0)
+                        : null,
+                    'data_size' => $biometric->data_size ?: strlen((string) $biometric->template_data),
+                    'template_hash' => sha1((string) $biometric->template_data),
+                    'template_data' => (string) $biometric->template_data,
+                    'metadata' => is_array($biometric->raw_payload) ? $biometric->raw_payload : [],
+                ]);
+
+                $template->setRelation('employee', $employee);
+                $template->setRelation('device', $biometric->device ?: $sourceDevice);
+
+                return $template;
+            })
+            ->unique(static fn (BiometricTemplate $template): string => sha1(json_encode([
+                'type' => $template->template_type,
+                'index' => $template->template_index,
+                'hash' => $template->template_hash,
+            ], JSON_THROW_ON_ERROR)))
+            ->values();
+    }
+
+    private function resolveTemplateTransportFromMetadata(?array $metadata): ?string
+    {
+        $metadata = is_array($metadata) ? $metadata : [];
+
+        if (($metadata['source'] ?? null) === 'udp') {
+            return 'udp';
+        }
+
+        if (! empty($metadata['template_transport'])) {
+            return (string) $metadata['template_transport'];
+        }
+
+        if (array_key_exists('TMP', $metadata) || array_key_exists('Content', $metadata)) {
+            return 'adms_upload';
+        }
+
+        return null;
+    }
+
+    private function hasFaceUploadPrefixInMetadata(string $templateType, ?array $metadata): bool
+    {
+        if ($templateType !== BiometricTemplate::TYPE_FACE) {
+            return false;
+        }
+
+        $metadata = is_array($metadata) ? $metadata : [];
+
+        if (array_key_exists('face_upload_prefixed', $metadata)) {
+            return (bool) $metadata['face_upload_prefixed'];
+        }
+
+        if (($metadata['source'] ?? null) === 'udp') {
+            return false;
+        }
+
+        return false;
     }
 }
