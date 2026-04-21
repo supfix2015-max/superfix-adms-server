@@ -12,6 +12,10 @@
 @endsection
 
 @section('content')
+    @php
+        $activeTab = $activeTab ?? 'raw';
+    @endphp
+
     <div class="metric-grid">
         <div class="card metric-card">
             <div class="card-body">
@@ -57,23 +61,23 @@
 
     <ul class="nav nav-tabs" id="logsTabs" role="tablist">
         <li class="nav-item" role="presentation">
-            <button class="nav-link active" id="raw-logs-tab" data-bs-toggle="tab" data-bs-target="#raw-logs" type="button" role="tab" aria-controls="raw-logs" aria-selected="true">Raw Logs</button>
+            <button class="nav-link {{ $activeTab === 'raw' ? 'active' : '' }}" id="raw-logs-tab" data-bs-toggle="tab" data-bs-target="#raw-logs" type="button" role="tab" aria-controls="raw-logs" aria-selected="{{ $activeTab === 'raw' ? 'true' : 'false' }}" data-tab-key="raw">Raw Logs</button>
         </li>
         <li class="nav-item" role="presentation">
-            <button class="nav-link" id="error-logs-tab" data-bs-toggle="tab" data-bs-target="#error-logs" type="button" role="tab" aria-controls="error-logs" aria-selected="false">Error Logs</button>
+            <button class="nav-link {{ $activeTab === 'error' ? 'active' : '' }}" id="error-logs-tab" data-bs-toggle="tab" data-bs-target="#error-logs" type="button" role="tab" aria-controls="error-logs" aria-selected="{{ $activeTab === 'error' ? 'true' : 'false' }}" data-tab-key="error">Error Logs</button>
         </li>
         <li class="nav-item" role="presentation">
-            <button class="nav-link" id="commands-tab" data-bs-toggle="tab" data-bs-target="#commands" type="button" role="tab" aria-controls="commands" aria-selected="false">Device Commands</button>
+            <button class="nav-link {{ $activeTab === 'commands' ? 'active' : '' }}" id="commands-tab" data-bs-toggle="tab" data-bs-target="#commands" type="button" role="tab" aria-controls="commands" aria-selected="{{ $activeTab === 'commands' ? 'true' : 'false' }}" data-tab-key="commands">Device Commands</button>
         </li>
     </ul>
 
     <div class="tab-content">
-        <div class="tab-pane fade show active" id="raw-logs" role="tabpanel" aria-labelledby="raw-logs-tab">
+        <div class="tab-pane fade {{ $activeTab === 'raw' ? 'show active' : '' }}" id="raw-logs" role="tabpanel" aria-labelledby="raw-logs-tab">
             <div class="card table-shell">
                 <div class="card-header">
                     <div>
                         <h5 class="shell-title">Raw Device Requests</h5>
-                        <div class="shell-subtitle">Payloads received from devices before they are normalized into attendance, biometric, or sync records.</div>
+                        <div class="shell-subtitle">Payloads received from devices before they are normalized into attendance, biometric, or sync records. Showing {{ $rawLogs->firstItem() ?? 0 }}-{{ $rawLogs->lastItem() ?? 0 }} of {{ $rawLogs->total() }}.</div>
                     </div>
                 </div>
                 <div class="card-body p-0">
@@ -123,15 +127,20 @@
                         </table>
                     </div>
                 </div>
+                @if($rawLogs->hasPages())
+                    <div class="card-footer">
+                        {{ $rawLogs->appends(request()->except('raw_page') + ['tab' => 'raw'])->links('pagination::bootstrap-5') }}
+                    </div>
+                @endif
             </div>
         </div>
 
-        <div class="tab-pane fade" id="error-logs" role="tabpanel" aria-labelledby="error-logs-tab">
+        <div class="tab-pane fade {{ $activeTab === 'error' ? 'show active' : '' }}" id="error-logs" role="tabpanel" aria-labelledby="error-logs-tab">
             <div class="card table-shell">
                 <div class="card-header">
                     <div>
                         <h5 class="shell-title">Error Diagnostics</h5>
-                        <div class="shell-subtitle">Exceptions and warnings captured during device ingest, parsing, and command processing.</div>
+                        <div class="shell-subtitle">Exceptions and warnings captured during device ingest, parsing, and command processing. Showing {{ $errorLogs->firstItem() ?? 0 }}-{{ $errorLogs->lastItem() ?? 0 }} of {{ $errorLogs->total() }}.</div>
                     </div>
                 </div>
                 <div class="card-body p-0">
@@ -176,15 +185,20 @@
                         </table>
                     </div>
                 </div>
+                @if($errorLogs->hasPages())
+                    <div class="card-footer">
+                        {{ $errorLogs->appends(request()->except('error_page') + ['tab' => 'error'])->links('pagination::bootstrap-5') }}
+                    </div>
+                @endif
             </div>
         </div>
 
-        <div class="tab-pane fade" id="commands" role="tabpanel" aria-labelledby="commands-tab">
+        <div class="tab-pane fade {{ $activeTab === 'commands' ? 'show active' : '' }}" id="commands" role="tabpanel" aria-labelledby="commands-tab">
             <div class="card table-shell">
                 <div class="card-header">
                     <div>
                         <h5 class="shell-title">Recent Device Commands</h5>
-                        <div class="shell-subtitle">Queue and completion history for device-side control operations.</div>
+                        <div class="shell-subtitle">Queue and completion history for device-side control operations. Showing {{ $commands->firstItem() ?? 0 }}-{{ $commands->lastItem() ?? 0 }} of {{ $commands->total() }}.</div>
                     </div>
                     <a href="{{ route('admin.commands.create') }}" class="btn btn-outline-primary btn-sm">Send Command</a>
                 </div>
@@ -228,6 +242,11 @@
                         </table>
                     </div>
                 </div>
+                @if($commands->hasPages())
+                    <div class="card-footer">
+                        {{ $commands->appends(request()->except('command_page') + ['tab' => 'commands'])->links('pagination::bootstrap-5') }}
+                    </div>
+                @endif
             </div>
         </div>
     </div>
@@ -263,5 +282,15 @@
                     new bootstrap.Modal(document.getElementById('rawLogModal')).show();
                 });
         }
+
+        document.querySelectorAll('#logsTabs [data-tab-key]').forEach((tabTrigger) => {
+            tabTrigger.addEventListener('shown.bs.tab', (event) => {
+                const tabKey = event.target.getAttribute('data-tab-key');
+                const url = new URL(window.location.href);
+
+                url.searchParams.set('tab', tabKey);
+                window.history.replaceState({}, '', url);
+            });
+        });
     </script>
 @endpush
