@@ -6,6 +6,7 @@ use App\Models\Device;
 use App\Models\DeviceCommand;
 use App\Repositories\DeviceRepository;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 
 class DeviceService
@@ -15,11 +16,21 @@ class DeviceService
         protected SystemClockService $systemClockService,
     ) {}
 
-    public function registerDevice(array $data): Device
+    public function registerDevice(array $data, bool $allowDeletedReactivation = false): Device
     {
         $serialNumber = $data['serial_number'] ?? $data['sn'] ?? null;
         if (! $serialNumber) {
             throw new \InvalidArgumentException('Device serial number is required');
+        }
+
+        $serialNumber = trim((string) $serialNumber);
+
+        if ($this->isDeletedSerialBlocked($serialNumber) && ! $allowDeletedReactivation) {
+            throw new \InvalidArgumentException('This device serial has been blocked after deletion and cannot auto-register.');
+        }
+
+        if ($allowDeletedReactivation) {
+            $this->clearDeletedSerialBlock($serialNumber);
         }
 
         $attributes = [
@@ -269,6 +280,8 @@ class DeviceService
         }
 
         return (bool) DB::transaction(function () use ($device): bool {
+            $this->blockDeletedSerial($device);
+
             DB::table('employees')
                 ->where('device_id', $device->id)
                 ->update([
@@ -303,6 +316,48 @@ class DeviceService
         return DB::table('users')->where('id', $userId)->exists()
             ? (int) $userId
             : null;
+    }
+
+    private function isDeletedSerialBlocked(string $serialNumber): bool
+    {
+        if (! Schema::hasTable('deleted_device_serials')) {
+            return false;
+        }
+
+        return DB::table('deleted_device_serials')
+            ->where('serial_number', $serialNumber)
+            ->exists();
+    }
+
+    private function clearDeletedSerialBlock(string $serialNumber): void
+    {
+        if (! Schema::hasTable('deleted_device_serials')) {
+            return;
+        }
+
+        DB::table('deleted_device_serials')
+            ->where('serial_number', $serialNumber)
+            ->delete();
+    }
+
+    private function blockDeletedSerial(Device $device): void
+    {
+        $serialNumber = trim((string) ($device->serial_number ?: $device->sn));
+
+        if ($serialNumber === '' || ! Schema::hasTable('deleted_device_serials')) {
+            return;
+        }
+
+        DB::table('deleted_device_serials')->updateOrInsert(
+            ['serial_number' => $serialNumber],
+            [
+                'device_name' => $device->name,
+                'deleted_by' => $this->resolveCreatedById(),
+                'deleted_at' => now(),
+                'updated_at' => now(),
+                'created_at' => now(),
+            ],
+        );
     }
 
     private function normalizeCommandParameters(string $command, array $parameters): array

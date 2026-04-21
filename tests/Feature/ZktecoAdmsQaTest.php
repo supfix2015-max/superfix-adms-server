@@ -1201,6 +1201,26 @@ class ZktecoAdmsQaTest extends TestCase
         ]);
     }
 
+    public function test_deleted_device_serial_is_blocked_from_auto_registration(): void
+    {
+        \Illuminate\Support\Facades\DB::table('deleted_device_serials')->insert([
+            'serial_number' => 'DELETED123',
+            'device_name' => 'Deleted Device',
+            'deleted_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $response = $this->get('/iclock/getrequest?SN=DELETED123');
+
+        $response->assertStatus(403);
+        $response->assertSee('ERROR=Unauthorized', false);
+
+        $this->assertDatabaseMissing('devices', [
+            'serial_number' => 'DELETED123',
+        ]);
+    }
+
     public function test_require_token_rejects_unauthorized_requests(): void
     {
         config()->set('zkteco.require_token', true);

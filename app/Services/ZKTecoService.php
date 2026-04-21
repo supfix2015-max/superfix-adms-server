@@ -16,6 +16,7 @@ use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 
 class ZKTecoService
@@ -306,6 +307,10 @@ class ZKTecoService
             throw new AuthorizationException('Device serial is not allowed');
         }
 
+        if ($this->isDeletedSerialBlocked($serialNumber)) {
+            throw new AuthorizationException('Deleted device serial is blocked');
+        }
+
         $device = Device::withTrashed()
             ->where(function ($query) use ($serialNumber): void {
                 $query->where('serial_number', $serialNumber)
@@ -353,6 +358,17 @@ class ZKTecoService
         }
 
         return $device;
+    }
+
+    private function isDeletedSerialBlocked(string $serialNumber): bool
+    {
+        if (! Schema::hasTable('deleted_device_serials')) {
+            return false;
+        }
+
+        return DB::table('deleted_device_serials')
+            ->where('serial_number', $serialNumber)
+            ->exists();
     }
 
     private function assertTrustedRequest(Request $request): void

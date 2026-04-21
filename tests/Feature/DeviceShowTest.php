@@ -203,6 +203,10 @@ class DeviceShowTest extends TestCase
             'id' => $device->id,
         ]);
 
+        $this->assertDatabaseHas('deleted_device_serials', [
+            'serial_number' => 'DELETE-DEVICE-001',
+        ]);
+
         $this->assertDatabaseHas('employees', [
             'id' => $employee->id,
             'device_id' => null,

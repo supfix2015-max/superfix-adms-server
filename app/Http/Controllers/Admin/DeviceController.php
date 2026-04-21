@@ -48,7 +48,7 @@ class DeviceController extends Controller
 
         try {
             $validated['sn'] = $validated['sn'];  // Keep as 'sn' for service
-            $device = $this->deviceService->registerDevice($validated);
+            $device = $this->deviceService->registerDevice($validated, true);
 
             return redirect()->route('admin.devices.show', $device)
                 ->with('success', 'Device registered successfully');
