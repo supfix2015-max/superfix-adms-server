@@ -64,6 +64,81 @@ class AdminEmployeesPageTest extends TestCase
         ]);
     }
 
+    public function test_employee_store_keeps_uid_and_sync_uid_aligned(): void
+    {
+        $response = $this->post(route('admin.employees.store'), [
+            'employee_id' => '991020',
+            'uid' => '',
+            'card_no' => '',
+            'device_password' => '',
+            'device_privilege' => 0,
+            'group_code' => '',
+            'timezone_code' => '',
+            'verification_mode' => '',
+            'vice_card_no' => '',
+            'valid_from' => '',
+            'valid_until' => '',
+            'status' => 'active',
+            'first_name' => 'Ayesha',
+            'last_name' => 'Rahman',
+            'email' => '',
+            'phone' => '',
+            'department' => '',
+            'hire_date' => '',
+            'notes' => '',
+        ]);
+
+        $employee = Employee::query()->where('employee_id', '991020')->firstOrFail();
+
+        $response->assertRedirect(route('admin.employees.show', $employee));
+        $this->assertSame('991020', $employee->uid);
+        $this->assertSame('991020', $employee->sync_uid);
+        $this->assertSame('Ayesha Rahman', $employee->name);
+        $this->assertSame('Ayesha Rahman', $employee->sync_name);
+    }
+
+    public function test_employee_update_keeps_name_and_uid_sync_columns_aligned(): void
+    {
+        $employee = Employee::query()->create([
+            'employee_id' => '991021',
+            'uid' => '991021',
+            'sync_uid' => '991021',
+            'name' => 'Old Name',
+            'sync_name' => 'Old Name',
+            'status' => 'active',
+        ]);
+
+        $response = $this->put(route('admin.employees.update', $employee), [
+            'uid' => '123456',
+            'card_no' => '',
+            'device_password' => '',
+            'device_privilege' => 0,
+            'group_code' => '',
+            'timezone_code' => '',
+            'verification_mode' => '',
+            'vice_card_no' => '',
+            'valid_from' => '',
+            'valid_until' => '',
+            'first_name' => 'Sharif',
+            'last_name' => 'Hasan',
+            'email' => '',
+            'phone' => '',
+            'department' => '',
+            'status' => 'active',
+            'hire_date' => '',
+            'notes' => '',
+        ]);
+
+        $response->assertRedirect(route('admin.employees.show', $employee));
+
+        $employee->refresh();
+
+        $this->assertSame('123456', $employee->uid);
+        $this->assertSame('123456', $employee->sync_uid);
+        $this->assertSame('Sharif Hasan', $employee->name);
+        $this->assertSame('Sharif Hasan', $employee->sync_name);
+    }
+
     public function test_employee_show_renders_online_biometric_enrollment_controls(): void
     {
         $device = Device::query()->create([

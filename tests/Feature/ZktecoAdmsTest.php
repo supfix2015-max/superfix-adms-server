@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\Device;
 use App\Models\DeviceCommand;
+use App\Models\Employee;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
@@ -75,6 +76,47 @@ class ZktecoAdmsTest extends TestCase
         ]);
 
         Http::assertSentCount(1);
+    }
+
+    public function test_attendance_upload_does_not_overwrite_existing_employee_identity_fields(): void
+    {
+        Device::query()->create([
+            'name' => 'Main Gate',
+            'sn' => 'ACME001',
+            'serial_number' => 'ACME001',
+            'status' => 'active',
+            'api_token' => 'secret-token',
+        ]);
+
+        Employee::query()->create([
+            'employee_id' => '1001',
+            'uid' => '1001',
+            'sync_uid' => '1001',
+            'name' => 'Sharif Hasan',
+            'sync_name' => 'Sharif Hasan',
+            'status' => 'active',
+        ]);
+
+        $response = $this->call(
+            'POST',
+            '/iclock/cdata?SN=ACME001&table=ATTLOG&Stamp=1',
+            [],
+            [],
+            [],
+            ['CONTENT_TYPE' => 'text/plain'],
+            "1001\t2026-04-17 08:30:00\t0\t1\t0\t\t\t\tATTLOG",
+        );
+
+        $response->assertOk();
+        $response->assertSee('OK:1', false);
+
+        $this->assertDatabaseHas('employees', [
+            'employee_id' => '1001',
+            'uid' => '1001',
+            'sync_uid' => '1001',
+            'name' => 'Sharif Hasan',
+            'sync_name' => 'Sharif Hasan',
+        ]);
     }
 
     public function test_it_returns_the_oldest_pending_command_in_zkteco_format(): void

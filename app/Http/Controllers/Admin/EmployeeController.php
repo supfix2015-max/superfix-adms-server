@@ -305,7 +305,7 @@ class EmployeeController extends Controller
             'notes' => 'nullable|string',
         ]);
 
-        $this->employeeService->updateEmployee($employee->id, $this->prepareEmployeePayload($validated));
+        $this->employeeService->updateEmployee($employee->id, $this->prepareEmployeePayload($validated, $employee));
         $employee->refresh();
         $this->refreshSyncSafety($employee);
 
@@ -331,12 +331,18 @@ class EmployeeController extends Controller
             ->with('success', $message);
     }
 
-    private function prepareEmployeePayload(array $validated): array
+    private function prepareEmployeePayload(array $validated, ?Employee $employee = null): array
     {
-        $validated['uid'] = isset($validated['uid'])
-            ? preg_replace('/[^0-9]/', '', (string) $validated['uid'])
-            : null;
-        $validated['sync_uid'] = $validated['uid'] !== '' ? $validated['uid'] : null;
+        $validated['uid'] = $this->normalizeNumericIdentifier(
+            $validated['uid'] ?? null,
+            $validated['employee_id'] ?? $employee?->employee_id,
+        );
+        $validated['sync_uid'] = $validated['uid'];
+        $validated['name'] = $this->buildEmployeeName(
+            $validated['first_name'] ?? null,
+            $validated['last_name'] ?? null,
+        );
+        $validated['sync_name'] = $validated['name'];
         $validated['card_no'] = $this->normalizeOptionalString($validated['card_no'] ?? null);
         $validated['device_password'] = $this->normalizeOptionalString($validated['device_password'] ?? null);
         $validated['group_code'] = $this->normalizeOptionalString($validated['group_code'] ?? null);
@@ -344,6 +350,7 @@ class EmployeeController extends Controller
         $validated['verification_mode'] = $this->normalizeOptionalString($validated['verification_mode'] ?? null);
         $validated['vice_card_no'] = $this->normalizeOptionalString($validated['vice_card_no'] ?? null);
         $validated['status'] = $validated['status'] ?? 'active';
+        unset($validated['first_name'], $validated['last_name']);
 
         return $validated;
     }
@@ -392,6 +399,27 @@ class EmployeeController extends Controller
         $value = trim((string) $value);
 
         return $value !== '' ? $value : null;
+    }
+
+    private function normalizeNumericIdentifier(mixed ...$candidates): ?string
+    {
+        foreach ($candidates as $candidate) {
+            $candidate = preg_replace('/[^0-9]/', '', trim((string) $candidate));
+
+            if ($candidate !== '') {
+                return substr($candidate, 0, 32);
+            }
+        }
+
+        return null;
+    }
+
+    private function buildEmployeeName(?string $firstName, ?string $lastName): string
+    {
+        return trim(implode(' ', array_filter([
+            trim((string) $firstName),
+            trim((string) $lastName),
+        ], static fn (string $value): bool => $value !== '')));
     }
 
     private function resolveEnrollmentPin(Employee $employee): ?string

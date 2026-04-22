@@ -58,9 +58,19 @@ class EmployeeController extends Controller
             'employee_name' => 'required|string|max:255',
         ]);
 
-        $employee = Employee::updateOrCreate(
+        $employeeId = (string) $request->employee_id;
+        $employeeName = trim((string) $request->employee_name);
+        $deviceUid = preg_replace('/[^0-9]/', '', $employeeId);
+        $deviceUid = $deviceUid !== '' ? substr($deviceUid, 0, 32) : null;
+
+        Employee::updateOrCreate(
             ['employee_id' => $request->employee_id],
-            ['name' => $request->employee_name]
+            [
+                'uid' => $deviceUid,
+                'sync_uid' => $deviceUid,
+                'name' => $employeeName,
+                'sync_name' => $employeeName,
+            ]
         );
 
         return redirect()->route('employee.MapId');

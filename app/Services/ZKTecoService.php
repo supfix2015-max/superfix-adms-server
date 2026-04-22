@@ -596,18 +596,41 @@ class ZKTecoService
         $newHashes = [];
 
         DB::transaction(function () use ($device, $preparedRecords, &$newHashes): void {
+            $existingEmployees = Employee::query()
+                ->whereIn('employee_id', $preparedRecords->pluck('employee_code')->unique()->all())
+                ->get()
+                ->keyBy('employee_id');
+
             $employeeRows = $preparedRecords
-                ->map(fn (array $record): array => [
-                    'employee_id' => $record['employee_code'],
-                    'device_id' => $device->id,
-                    'uid' => $record['uid'],
-                    'card_no' => $record['card_no'],
-                    'name' => $record['name'] ?: "User {$record['employee_code']}",
-                    'status' => 'active',
-                    'raw_payload' => json_encode($record['raw_payload'], JSON_THROW_ON_ERROR | JSON_INVALID_UTF8_SUBSTITUTE),
-                    'updated_at' => now(),
-                    'created_at' => now(),
-                ])
+                ->map(function (array $record) use ($device, $existingEmployees): array {
+                    /** @var Employee|null $existingEmployee */
+                    $existingEmployee = $existingEmployees->get($record['employee_code']);
+                    $recordUid = trim((string) ($record['uid'] ?? ''));
+                    $fallbackUid = preg_replace('/[^0-9]/', '', trim((string) $record['employee_code']));
+                    $resolvedUid = $recordUid !== ''
+                        ? $recordUid
+                        : ($existingEmployee?->uid ?: $existingEmployee?->sync_uid ?: ($fallbackUid !== '' ? $fallbackUid : null));
+                    $recordCardNo = trim((string) ($record['card_no'] ?? ''));
+                    $resolvedCardNo = $recordCardNo !== '' ? $recordCardNo : $existingEmployee?->card_no;
+                    $recordName = trim((string) ($record['name'] ?? ''));
+                    $resolvedName = $recordName !== ''
+                        ? $recordName
+                        : ($existingEmployee?->name ?: $existingEmployee?->sync_name ?: "User {$record['employee_code']}");
+
+                    return [
+                        'employee_id' => $record['employee_code'],
+                        'device_id' => $device->id,
+                        'uid' => $resolvedUid,
+                        'sync_uid' => $resolvedUid,
+                        'card_no' => $resolvedCardNo,
+                        'name' => $resolvedName,
+                        'sync_name' => $resolvedName,
+                        'status' => 'active',
+                        'raw_payload' => json_encode($record['raw_payload'], JSON_THROW_ON_ERROR | JSON_INVALID_UTF8_SUBSTITUTE),
+                        'updated_at' => now(),
+                        'created_at' => now(),
+                    ];
+                })
                 ->unique('employee_id')
                 ->values();
 
@@ -615,7 +638,7 @@ class ZKTecoService
                 Employee::query()->upsert(
                     $employeeRows->all(),
                     ['employee_id'],
-                    ['device_id', 'uid', 'card_no', 'name', 'status', 'raw_payload', 'updated_at']
+                    ['device_id', 'uid', 'sync_uid', 'card_no', 'name', 'sync_name', 'status', 'raw_payload', 'updated_at']
                 );
             }
 
