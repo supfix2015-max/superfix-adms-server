@@ -82,7 +82,7 @@
                             <tr>
                                 <td><code>{{ $employee->employee_id }}</code></td>
                                 <td>
-                                    <div class="fw-semibold">{{ $employee->full_name }}</div>
+                                    <div class="fw-semibold">{{ $employee->sync_name }}</div>
                                     <div class="small">{{ $employee->phone ?? 'No phone number' }}</div>
                                 </td>
                                 <td>{{ $employee->email ?? '-' }}</td>
