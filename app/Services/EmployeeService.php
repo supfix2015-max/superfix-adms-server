@@ -13,6 +13,8 @@ use Illuminate\Support\Facades\Schema;
 
 class EmployeeService
 {
+    protected static array $employeeColumnCache = [];
+
     public function __construct(
         protected EmployeeRepository $repository,
         protected CommandService $commandService,
@@ -31,6 +33,7 @@ class EmployeeService
 
         $data['status'] = $targetStatus;
         $data = $this->applyLifecycleTimestamps($employee, $data, $targetStatus);
+        $data = $this->filterSupportedEmployeeAttributes($data);
 
         if (Employee::shouldRemoveFromDevices($targetStatus)) {
             $this->archiveEmployee($employee, $targetStatus, $data);
@@ -184,6 +187,7 @@ class EmployeeService
         $originalEmployeeName = $employee->full_name;
         $attributes['status'] = $status;
         $attributes = $this->applyLifecycleTimestamps($employee, $attributes, $status);
+        $attributes = $this->filterSupportedEmployeeAttributes($attributes);
 
         DB::transaction(function () use (
             $employee,
@@ -356,14 +360,38 @@ class EmployeeService
 
     private function applyLifecycleTimestamps(Employee $employee, array $attributes, string $status): array
     {
-        if ($status === Employee::STATUS_SUSPENDED && ! $employee->suspended_at) {
+        if ($status === Employee::STATUS_SUSPENDED
+            && $this->employeeColumnExists('suspended_at')
+            && ! $employee->suspended_at) {
             $attributes['suspended_at'] = now();
         }
 
-        if (in_array($status, Employee::resignedStatuses(), true) && ! $employee->resigned_at) {
+        if (in_array($status, Employee::resignedStatuses(), true)
+            && $this->employeeColumnExists('resigned_at')
+            && ! $employee->resigned_at) {
             $attributes['resigned_at'] = now();
         }
 
         return $attributes;
+    }
+
+    private function filterSupportedEmployeeAttributes(array $attributes): array
+    {
+        foreach (['suspended_at', 'resigned_at'] as $column) {
+            if (array_key_exists($column, $attributes) && ! $this->employeeColumnExists($column)) {
+                unset($attributes[$column]);
+            }
+        }
+
+        return $attributes;
+    }
+
+    private function employeeColumnExists(string $column): bool
+    {
+        if (! array_key_exists($column, self::$employeeColumnCache)) {
+            self::$employeeColumnCache[$column] = Schema::hasColumn('employees', $column);
+        }
+
+        return self::$employeeColumnCache[$column];
     }
 }
