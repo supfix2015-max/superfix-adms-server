@@ -491,6 +491,56 @@ class ZktecoAdmsQaTest extends TestCase
         $this->assertSame(DeviceCommand::STATUS_DONE, $command->status);
     }
 
+    public function test_pull_employees_upload_does_not_replace_existing_name_with_generated_device_name(): void
+    {
+        $device = Device::query()->create([
+            'name' => 'QA Device',
+            'sn' => 'TEST123',
+            'serial_number' => 'TEST123',
+            'status' => 'active',
+        ]);
+
+        Employee::query()->create([
+            'device_id' => $device->id,
+            'employee_id' => '9001',
+            'uid' => '9001',
+            'sync_uid' => '9001',
+            'name' => 'Abdul Karim',
+            'sync_name' => 'Abdul Karim',
+            'status' => 'active',
+        ]);
+
+        $command = app(DeviceService::class)->queuePullEmployees($device->id);
+
+        $this->get('/iclock/getrequest?SN=TEST123')->assertOk();
+
+        $upload = $this->call(
+            'POST',
+            '/iclock/cdata?SN=TEST123&table=USERINFO&Stamp=11',
+            [],
+            [],
+            [],
+            ['CONTENT_TYPE' => 'text/plain'],
+            "PIN=9001\tName=User 9001\tCard=1234\tUID=9001",
+        );
+
+        $upload->assertOk();
+        $upload->assertSee('OK:1', false);
+
+        $this->assertDatabaseHas('employees', [
+            'device_id' => $device->id,
+            'employee_id' => '9001',
+            'uid' => '9001',
+            'sync_uid' => '9001',
+            'name' => 'Abdul Karim',
+            'sync_name' => 'Abdul Karim',
+            'card_no' => '1234',
+        ]);
+
+        $command->refresh();
+        $this->assertSame(DeviceCommand::STATUS_DONE, $command->status);
+    }
+
     public function test_operlog_user_payload_is_ignored_for_employee_creation(): void
     {
         Device::query()->create([

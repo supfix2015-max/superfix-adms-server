@@ -122,6 +122,37 @@ class UserSyncService
             return false;
         })->unique('employee_id')->values();
 
+        $existingEmployees = Employee::query()
+            ->whereIn('employee_id', $rows->pluck('employee_id')->all())
+            ->get()
+            ->keyBy('employee_id');
+
+        $rows = $rows->map(function (array $row) use ($existingEmployees): array {
+            /** @var Employee|null $existingEmployee */
+            $existingEmployee = $existingEmployees->get($row['employee_id']);
+
+            if (! $existingEmployee) {
+                return $row;
+            }
+
+            $incomingName = trim((string) ($row['name'] ?? ''));
+            $existingName = trim((string) ($existingEmployee->name ?? ''));
+            $existingSyncName = trim((string) ($existingEmployee->sync_name ?? ''));
+            $resolvedSyncName = $existingSyncName !== '' ? $existingSyncName : $this->sanitizeSyncName($existingName);
+
+            if ($existingName !== '' && ($incomingName === '' || $this->isGeneratedEmployeeName($incomingName, [
+                $row['employee_id'] ?? null,
+                $row['sync_uid'] ?? null,
+                $existingEmployee->uid,
+                $existingEmployee->sync_uid,
+            ]))) {
+                $row['name'] = $existingName;
+                $row['sync_name'] = $resolvedSyncName ?: $existingName;
+            }
+
+            return $row;
+        })->values();
+
         if ($rows->isEmpty()) {
             throw new \InvalidArgumentException('No valid user records found');
         }
@@ -355,6 +386,25 @@ class UserSyncService
             $employee->name ?: $employee->sync_name ?: null,
             $rawPayload,
         );
+    }
+
+    private function isGeneratedEmployeeName(?string $name, array $identifiers): bool
+    {
+        $name = Str::of((string) $name)->squish()->lower()->value();
+
+        if ($name === '') {
+            return false;
+        }
+
+        foreach ($identifiers as $identifier) {
+            $identifier = trim((string) $identifier);
+
+            if ($identifier !== '' && $name === Str::of("User {$identifier}")->lower()->value()) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public function queueFullSyncForDevice(Device $device, bool $force = false, string $trigger = 'manual'): ?DeviceSync
