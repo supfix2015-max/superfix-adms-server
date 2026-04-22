@@ -105,7 +105,7 @@ class AdminEmployeesPageTest extends TestCase
             'sync_uid' => '991021',
             'name' => 'Old Name',
             'sync_name' => 'Old Name',
-            'status' => 'active',
+            'status' => Employee::STATUS_ACTIVE,
         ]);
 
         $response = $this->put(route('admin.employees.update', $employee), [
@@ -124,7 +124,7 @@ class AdminEmployeesPageTest extends TestCase
             'email' => '',
             'phone' => '',
             'department' => '',
-            'status' => 'active',
+            'status' => Employee::STATUS_ACTIVE,
             'hire_date' => '',
             'notes' => '',
         ]);
@@ -137,6 +137,59 @@ class AdminEmployeesPageTest extends TestCase
         $this->assertSame('123456', $employee->sync_uid);
         $this->assertSame('Sharif Hasan', $employee->name);
         $this->assertSame('Sharif Hasan', $employee->sync_name);
+        $this->assertSame(Employee::STATUS_ACTIVE, $employee->status);
+    }
+
+    public function test_employee_update_to_suspended_offboards_from_devices_and_releases_identifiers(): void
+    {
+        $device = Device::query()->create([
+            'name' => 'Status Device',
+            'sn' => 'EMP-STATUS-001',
+            'serial_number' => 'EMP-STATUS-001',
+            'status' => 'active',
+        ]);
+
+        $employee = Employee::query()->create([
+            'employee_id' => '991022',
+            'device_id' => $device->id,
+            'uid' => '991022',
+            'sync_uid' => '991022',
+            'name' => 'Archive User',
+            'sync_name' => 'Archive User',
+            'status' => Employee::STATUS_ACTIVE,
+        ]);
+
+        $response = $this->put(route('admin.employees.update', $employee), [
+            'uid' => '991022',
+            'card_no' => '',
+            'device_password' => '',
+            'device_privilege' => 0,
+            'group_code' => '',
+            'timezone_code' => '',
+            'verification_mode' => '',
+            'vice_card_no' => '',
+            'valid_from' => '',
+            'valid_until' => '',
+            'first_name' => 'Archive',
+            'last_name' => 'User',
+            'email' => '',
+            'phone' => '',
+            'department' => '',
+            'status' => Employee::STATUS_SUSPENDED,
+            'hire_date' => '',
+            'notes' => '',
+        ]);
+
+        $response->assertRedirect(route('admin.employees.show', $employee));
+
+        $employee->refresh();
+
+        $this->assertNull($employee->employee_id);
+        $this->assertNull($employee->uid);
+        $this->assertNull($employee->sync_uid);
+        $this->assertNull($employee->device_id);
+        $this->assertSame(Employee::STATUS_SUSPENDED, $employee->status);
+        $this->assertNotNull($employee->suspended_at);
     }
 
     public function test_employee_show_renders_online_biometric_enrollment_controls(): void
@@ -260,7 +313,7 @@ class AdminEmployeesPageTest extends TestCase
         $this->assertSame('3', $command->parameters['template_index']);
     }
 
-    public function test_employee_delete_force_removes_local_records_and_queues_device_cleanup_commands(): void
+    public function test_employee_delete_archives_record_and_queues_device_cleanup_commands(): void
     {
         $deviceA = Device::query()->create([
             'name' => 'Gate A',
@@ -324,9 +377,17 @@ class AdminEmployeesPageTest extends TestCase
         $response->assertRedirect(route('admin.employees.index'));
         $response->assertSessionHas('success');
 
-        $this->assertDatabaseMissing('employees', [
+        $this->assertDatabaseHas('employees', [
             'id' => $employee->id,
+            'status' => Employee::STATUS_TERMINATED,
         ]);
+
+        $employee->refresh();
+
+        $this->assertNull($employee->employee_id);
+        $this->assertNull($employee->uid);
+        $this->assertNull($employee->sync_uid);
+        $this->assertNotNull($employee->resigned_at);
 
         $this->assertDatabaseMissing('employee_biometrics', [
             'employee_code' => '991099',
@@ -363,6 +424,16 @@ class AdminEmployeesPageTest extends TestCase
             'command' => 'DATA DELETE FACE PIN=991099',
             'status' => DeviceCommand::STATUS_PENDING,
         ]);
+
+        $replacement = Employee::query()->create([
+            'employee_id' => '991099',
+            'uid' => '991099',
+            'sync_uid' => '991099',
+            'name' => 'Replacement User',
+            'status' => Employee::STATUS_ACTIVE,
+        ]);
+
+        $this->assertNotNull($replacement->id);
     }
 
     public function test_employee_biometric_enrollment_status_reports_completed_after_template_upload(): void

@@ -625,7 +625,7 @@ class ZKTecoService
                         'card_no' => $resolvedCardNo,
                         'name' => $resolvedName,
                         'sync_name' => $resolvedName,
-                        'status' => 'active',
+                        'status' => Employee::STATUS_ACTIVE,
                         'raw_payload' => json_encode($record['raw_payload'], JSON_THROW_ON_ERROR | JSON_INVALID_UTF8_SUBSTITUTE),
                         'updated_at' => now(),
                         'created_at' => now(),

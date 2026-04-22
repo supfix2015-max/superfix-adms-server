@@ -248,8 +248,8 @@ class CredentialController extends Controller
 
     private function makeCredentialRow(Employee $employee, string $type, string $displayValue, string $rawValue): array
     {
-        $status = $employee->status === 'active' ? 'ACTIVE' : strtoupper((string) $employee->status);
-        $statusClass = $employee->status === 'active' ? 'success' : 'secondary';
+        $status = $employee->status_label;
+        $statusClass = $employee->status_badge_class;
 
         if ($employee->valid_until instanceof Carbon && $employee->valid_until->isPast()) {
             $status = 'EXPIRED';

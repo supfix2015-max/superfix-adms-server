@@ -5,11 +5,7 @@
 @section('page_subtitle', 'Review employee identity, enrollment readiness, stored biometrics, attendance activity, and replay audit history from one profile.')
 
 @php
-    $statusClass = match ($employee->status) {
-        'active' => 'success',
-        'inactive' => 'secondary',
-        default => 'warning',
-    };
+    $statusClass = $employee->status_badge_class;
 
     $attendanceThisMonth = $employee->attendanceLogs()->whereMonth('created_at', now()->month)->count();
     $attendanceThisYear = $employee->attendanceLogs()->whereYear('created_at', now()->year)->count();
@@ -265,13 +261,13 @@
                     <h5 class="card-title mb-1">Employee Details</h5>
                     <div class="card-subtitle">Profile, access configuration, and device identity.</div>
                 </div>
-                <span class="badge bg-{{ $statusClass }}">{{ ucfirst($employee->status) }}</span>
+                <span class="badge bg-{{ $statusClass }}">{{ $employee->status_label }}</span>
             </div>
             <div class="card-body">
                 <div class="employee-detail-grid">
                     <div class="employee-field">
                         <div class="employee-field-label">Employee ID</div>
-                        <div class="employee-field-value"><code>{{ $employee->employee_id }}</code></div>
+                        <div class="employee-field-value"><code>{{ $employee->employee_id ?? 'ARCHIVED' }}</code></div>
                     </div>
                     <div class="employee-field">
                         <div class="employee-field-label">Full Name</div>
@@ -298,6 +294,18 @@
                     <div class="employee-field">
                         <div class="employee-field-label">Device UID</div>
                         <div class="employee-field-value">{{ $employee->uid ?? 'Not set' }}</div>
+                    </div>
+                    <div class="employee-field">
+                        <div class="employee-field-label">Suspended At</div>
+                        <div class="employee-field-value {{ $employee->suspended_at ? '' : 'is-muted' }}">
+                            {{ $employee->suspended_at?->format('M d, Y H:i') ?? 'Not recorded' }}
+                        </div>
+                    </div>
+                    <div class="employee-field">
+                        <div class="employee-field-label">Resigned / Ended At</div>
+                        <div class="employee-field-value {{ $employee->resigned_at ? '' : 'is-muted' }}">
+                            {{ $employee->resigned_at?->format('M d, Y H:i') ?? 'Not recorded' }}
+                        </div>
                     </div>
                     <div class="employee-field">
                         <div class="employee-field-label">Card Number</div>
@@ -342,11 +350,11 @@
                     <form
                         method="POST"
                         action="{{ route('admin.employees.destroy', $employee) }}"
-                        onsubmit="return confirm('Delete {{ $employee->full_name }}? All records will be preserved.');"
+                        onsubmit="return confirm('Offboard {{ $employee->full_name }}? The employee will be removed from devices but kept in the database.');"
                     >
                         @csrf
                         @method('DELETE')
-                        <button type="submit" class="btn btn-danger">Delete Employee</button>
+                        <button type="submit" class="btn btn-danger">Offboard Employee</button>
                     </form>
                 </div>
             </div>

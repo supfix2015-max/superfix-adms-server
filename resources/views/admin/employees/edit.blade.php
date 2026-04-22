@@ -29,15 +29,17 @@
                         <div class="row g-3">
                             <div class="col-md-6">
                                 <label for="employee_id_display" class="form-label fw-semibold">Employee ID</label>
-                                <input id="employee_id_display" type="text" class="form-control bg-light" value="{{ $employee->employee_id }}" readonly>
-                                <div class="form-text">Employee ID stays fixed after creation.</div>
+                                <input id="employee_id_display" type="text" class="form-control bg-light" value="{{ $employee->employee_id ?? 'ARCHIVED' }}" readonly>
+                                <div class="form-text">Employee ID is released after offboarding so the next joiner can reuse it.</div>
                             </div>
                             <div class="col-md-6">
                                 <label for="status" class="form-label fw-semibold">Status</label>
                                 <select id="status" class="form-select @error('status') is-invalid @enderror" name="status">
-                                    <option value="active" {{ old('status', $employee->status) === 'active' ? 'selected' : '' }}>Active</option>
-                                    <option value="inactive" {{ old('status', $employee->status) === 'inactive' ? 'selected' : '' }}>Inactive</option>
-                                    <option value="suspended" {{ old('status', $employee->status) === 'suspended' ? 'selected' : '' }}>Suspended</option>
+                                    @foreach(\App\Models\Employee::statusOptions() as $status)
+                                        <option value="{{ $status }}" {{ \App\Models\Employee::normalizeStatus(old('status', $employee->status)) === $status ? 'selected' : '' }}>
+                                            {{ \App\Models\Employee::labelForStatus($status) }}
+                                        </option>
+                                    @endforeach
                                 </select>
                                 @error('status')<div class="invalid-feedback">{{ $message }}</div>@enderror
                             </div>
@@ -155,7 +157,7 @@
                                 <span>Primary display name shown in the employee directory and audit screens.</span>
                             </div>
                             <div class="stat-pill">
-                                <strong>{{ ucfirst($employee->status) }}</strong>
+                                <strong>{{ $employee->status_label }}</strong>
                                 <span>Changing the employee status affects how the record appears across filters and sync scopes.</span>
                             </div>
                             <div class="stat-pill">

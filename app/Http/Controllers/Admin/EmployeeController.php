@@ -14,6 +14,7 @@ use App\Services\EmployeeService;
 use App\Services\UserSyncService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
+use Illuminate\Validation\Rule;
 
 class EmployeeController extends Controller
 {
@@ -30,7 +31,7 @@ class EmployeeController extends Controller
     {
         $filters = [
             'search' => $request->input('search'),
-            'status' => $request->input('status'),
+            'status' => Employee::normalizeStatus($request->input('status')),
             'department' => $request->input('department'),
         ];
 
@@ -67,7 +68,7 @@ class EmployeeController extends Controller
             'vice_card_no' => 'nullable|string|max:64',
             'valid_from' => 'nullable|date',
             'valid_until' => 'nullable|date|after_or_equal:valid_from',
-            'status' => 'nullable|in:active,inactive,suspended',
+            'status' => ['nullable', Rule::in(Employee::acceptedStatusInputs())],
             'first_name' => 'required|string|max:255',
             'last_name' => 'required|string|max:255',
             'email' => 'nullable|email|unique:employees',
@@ -300,13 +301,12 @@ class EmployeeController extends Controller
             'email' => 'nullable|email',
             'phone' => 'nullable|string',
             'department' => 'nullable|string',
-            'status' => 'in:active,inactive,suspended',
+            'status' => ['required', Rule::in(Employee::acceptedStatusInputs())],
             'hire_date' => 'nullable|date',
             'notes' => 'nullable|string',
         ]);
 
-        $this->employeeService->updateEmployee($employee->id, $this->prepareEmployeePayload($validated, $employee));
-        $employee->refresh();
+        $employee = $this->employeeService->updateEmployeeProfile($employee, $this->prepareEmployeePayload($validated, $employee));
         $this->refreshSyncSafety($employee);
 
         return redirect()->route('admin.employees.show', $employee)
@@ -318,7 +318,8 @@ class EmployeeController extends Controller
         $summary = $this->employeeService->deleteEmployee($employee->id);
 
         $message = sprintf(
-            'Employee deleted from the database. Queued %d cleanup command(s) for %d device(s).',
+            'Employee archived as %s and removed from device sync. Queued %d cleanup command(s) for %d device(s).',
+            Employee::labelForStatus($summary['status']),
             $summary['queued_device_commands'],
             $summary['device_targets'],
         );
@@ -349,7 +350,7 @@ class EmployeeController extends Controller
         $validated['timezone_code'] = $this->normalizeOptionalString($validated['timezone_code'] ?? null);
         $validated['verification_mode'] = $this->normalizeOptionalString($validated['verification_mode'] ?? null);
         $validated['vice_card_no'] = $this->normalizeOptionalString($validated['vice_card_no'] ?? null);
-        $validated['status'] = $validated['status'] ?? 'active';
+        $validated['status'] = Employee::normalizeStatus((string) ($validated['status'] ?? '')) ?? Employee::STATUS_ACTIVE;
         unset($validated['first_name'], $validated['last_name']);
 
         return $validated;

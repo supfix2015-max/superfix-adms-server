@@ -82,7 +82,7 @@ class UserSyncService
                 'valid_until' => $credentialAttributes['valid_until'],
                 'name' => $syncName,
                 'sync_name' => $syncName,
-                'status' => 'active',
+                'status' => Employee::STATUS_ACTIVE,
                 'sync_enabled' => true,
                 'sync_validation_errors' => null,
                 'last_sync_validated_at' => now(),
@@ -247,7 +247,7 @@ class UserSyncService
                 $errors[] = 'duplicate_sync_uid';
             }
 
-            $syncEnabled = $errors === [] && $employee->status === 'active';
+            $syncEnabled = $errors === [] && Employee::isSyncEligibleStatus($employee->status);
 
             if (in_array('legacy_operation_log_record', $errors, true) && config('zkteco.auto_cleanup_legacy_users', false)) {
                 $deletedIds[] = $employee->id;
@@ -822,7 +822,7 @@ class UserSyncService
                 },
             ])
             ->syncSafe()
-            ->where('status', 'active')
+            ->whereIn('status', Employee::syncEligibleStatuses())
             ->orderBy('employee_id')
             ->get()
             ->map(function (Employee $employee): SyncableEmployeeData {

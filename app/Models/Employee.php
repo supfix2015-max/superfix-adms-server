@@ -14,6 +14,20 @@ class Employee extends Model
 {
     use HasFactory, Notifiable, SoftDeletes;
 
+    public const STATUS_ACTIVE = 'ACTIVE';
+
+    public const STATUS_ON_LEAVE = 'ON_LEAVE';
+
+    public const STATUS_SUSPENDED = 'SUSPENDED';
+
+    public const STATUS_RESIGNED = 'RESIGNED';
+
+    public const STATUS_TERMINATED = 'TERMINATED';
+
+    public const STATUS_RETIRED = 'RETIRED';
+
+    public const STATUS_INACTIVE = 'INACTIVE';
+
     protected $fillable = [
         'employee_id',
         'device_id',
@@ -37,6 +51,8 @@ class Employee extends Model
         'department',
         'status',
         'sync_enabled',
+        'suspended_at',
+        'resigned_at',
         'hire_date',
         'notes',
         'raw_payload',
@@ -54,9 +70,84 @@ class Employee extends Model
         'device_privilege' => 'integer',
         'valid_from' => 'datetime',
         'valid_until' => 'datetime',
+        'suspended_at' => 'datetime',
+        'resigned_at' => 'datetime',
     ];
 
-    protected $appends = ['full_name'];
+    protected $appends = ['full_name', 'status_label', 'status_badge_class'];
+
+    public static function statusOptions(): array
+    {
+        return [
+            self::STATUS_ACTIVE,
+            self::STATUS_ON_LEAVE,
+            self::STATUS_SUSPENDED,
+            self::STATUS_RESIGNED,
+            self::STATUS_TERMINATED,
+            self::STATUS_RETIRED,
+            self::STATUS_INACTIVE,
+        ];
+    }
+
+    public static function acceptedStatusInputs(): array
+    {
+        return array_values(array_unique(array_merge(
+            self::statusOptions(),
+            array_map('strtolower', self::statusOptions()),
+        )));
+    }
+
+    public static function syncEligibleStatuses(): array
+    {
+        return [
+            self::STATUS_ACTIVE,
+            self::STATUS_ON_LEAVE,
+        ];
+    }
+
+    public static function deviceRemovalStatuses(): array
+    {
+        return [
+            self::STATUS_SUSPENDED,
+            self::STATUS_RESIGNED,
+            self::STATUS_TERMINATED,
+            self::STATUS_RETIRED,
+        ];
+    }
+
+    public static function resignedStatuses(): array
+    {
+        return [
+            self::STATUS_RESIGNED,
+            self::STATUS_TERMINATED,
+            self::STATUS_RETIRED,
+        ];
+    }
+
+    public static function normalizeStatus(?string $status): ?string
+    {
+        $status = strtoupper(trim((string) $status));
+        $status = str_replace(' ', '_', $status);
+
+        return in_array($status, self::statusOptions(), true) ? $status : null;
+    }
+
+    public static function isSyncEligibleStatus(?string $status): bool
+    {
+        return in_array(self::normalizeStatus($status), self::syncEligibleStatuses(), true);
+    }
+
+    public static function shouldRemoveFromDevices(?string $status): bool
+    {
+        return in_array(self::normalizeStatus($status), self::deviceRemovalStatuses(), true);
+    }
+
+    public static function labelForStatus(?string $status): string
+    {
+        $status = self::normalizeStatus($status) ?? strtoupper(trim((string) $status));
+
+        return Str::of($status)->replace('_', ' ')->title()->value();
+    }
 
     public function getFullNameAttribute(): string
     {
@@ -95,6 +186,29 @@ class Employee extends Model
         $this->attributes['name'] = trim($this->getFirstNameAttribute().' '.$value);
     }
 
+    public function setStatusAttribute(?string $value): void
+    {
+        $this->attributes['status'] = self::normalizeStatus($value) ?? self::STATUS_ACTIVE;
+    }
+
+    public function getStatusLabelAttribute(): string
+    {
+        return self::labelForStatus($this->status);
+    }
+
+    public function getStatusBadgeClassAttribute(): string
+    {
+        return match ($this->status) {
+            self::STATUS_ACTIVE => 'success',
+            self::STATUS_ON_LEAVE => 'info text-dark',
+            self::STATUS_SUSPENDED => 'warning text-dark',
+            self::STATUS_TERMINATED => 'danger',
+            self::STATUS_RETIRED => 'primary',
+            self::STATUS_RESIGNED => 'dark',
+            default => 'secondary',
+        };
+    }
+
     public function device(): BelongsTo
     {
         return $this->belongsTo(Device::class);
@@ -117,7 +231,7 @@ class Employee extends Model
 
     public function scopeActive($query)
     {
-        return $query->where('status', 'active');
+        return $query->where('status', self::STATUS_ACTIVE);
     }
 
     public function scopeSyncSafe($query)

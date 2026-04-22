@@ -34,9 +34,11 @@
                             <div class="col-md-6">
                                 <label for="status" class="form-label fw-semibold">Status</label>
                                 <select id="status" class="form-select" name="status">
-                                    <option value="active" {{ old('status', 'active') === 'active' ? 'selected' : '' }}>Active</option>
-                                    <option value="inactive" {{ old('status') === 'inactive' ? 'selected' : '' }}>Inactive</option>
-                                    <option value="suspended" {{ old('status') === 'suspended' ? 'selected' : '' }}>Suspended</option>
+                                    @foreach(\App\Models\Employee::statusOptions() as $status)
+                                        <option value="{{ $status }}" {{ \App\Models\Employee::normalizeStatus(old('status', \App\Models\Employee::STATUS_ACTIVE)) === $status ? 'selected' : '' }}>
+                                            {{ \App\Models\Employee::labelForStatus($status) }}
+                                        </option>
+                                    @endforeach
                                 </select>
                             </div>
                             <div class="col-md-6">

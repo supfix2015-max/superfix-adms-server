@@ -37,7 +37,11 @@ class EmployeeRepository extends BaseRepository
         }
 
         if (! empty($filters['status'])) {
-            $query->where('status', $filters['status']);
+            $normalizedStatus = Employee::normalizeStatus((string) $filters['status']);
+
+            if ($normalizedStatus !== null) {
+                $query->where('status', $normalizedStatus);
+            }
         }
 
         if (! empty($filters['department'])) {
@@ -97,9 +101,17 @@ class EmployeeRepository extends BaseRepository
     {
         return [
             'total' => $this->count(),
-            'active' => $this->model->where('status', 'active')->count(),
-            'inactive' => $this->model->where('status', 'inactive')->count(),
-            'suspended' => $this->model->whereIn('status', ['suspended', 'on_leave'])->count(),
+            'active' => $this->model->where('status', Employee::STATUS_ACTIVE)->count(),
+            'inactive' => $this->model->whereIn('status', [
+                Employee::STATUS_INACTIVE,
+                Employee::STATUS_ON_LEAVE,
+            ])->count(),
+            'suspended' => $this->model->whereIn('status', [
+                Employee::STATUS_SUSPENDED,
+                Employee::STATUS_RESIGNED,
+                Employee::STATUS_TERMINATED,
+                Employee::STATUS_RETIRED,
+            ])->count(),
         ];
     }
 }

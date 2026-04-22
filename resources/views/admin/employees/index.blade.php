@@ -39,9 +39,11 @@
                 <div class="col-sm-6 col-lg-3">
                     <select name="status" class="form-select">
                         <option value="">All Status</option>
-                        <option value="active" {{ ($filters['status'] ?? '') === 'active' ? 'selected' : '' }}>Active</option>
-                        <option value="inactive" {{ ($filters['status'] ?? '') === 'inactive' ? 'selected' : '' }}>Inactive</option>
-                        <option value="suspended" {{ ($filters['status'] ?? '') === 'suspended' ? 'selected' : '' }}>Suspended</option>
+                        @foreach(\App\Models\Employee::statusOptions() as $status)
+                            <option value="{{ $status }}" {{ ($filters['status'] ?? '') === $status ? 'selected' : '' }}>
+                                {{ \App\Models\Employee::labelForStatus($status) }}
+                            </option>
+                        @endforeach
                     </select>
                 </div>
                 <div class="col-sm-6 col-lg-3">
@@ -80,16 +82,16 @@
                     <tbody>
                         @forelse($employees as $employee)
                             <tr>
-                                <td><code>{{ $employee->employee_id }}</code></td>
+                                <td><code>{{ $employee->employee_id ?? 'ARCHIVED' }}</code></td>
                                 <td>
-                                    <div class="fw-semibold">{{ $employee->sync_name }}</div>
+                                    <div class="fw-semibold">{{ $employee->sync_name ?: $employee->full_name }}</div>
                                     <div class="small">{{ $employee->phone ?? 'No phone number' }}</div>
                                 </td>
                                 <td>{{ $employee->email ?? '-' }}</td>
                                 <td>{{ $employee->department ?? '-' }}</td>
                                 <td>
-                                    <span class="badge bg-{{ $employee->status === 'active' ? 'success' : ($employee->status === 'inactive' ? 'secondary' : 'danger') }}">
-                                        {{ ucfirst($employee->status) }}
+                                    <span class="badge bg-{{ $employee->status_badge_class }}">
+                                        {{ $employee->status_label }}
                                     </span>
                                 </td>
                                 <td>{{ $employee->hire_date ? \Carbon\Carbon::parse($employee->hire_date)->format('Y-m-d') : '-' }}</td>
@@ -97,10 +99,10 @@
                                     <div class="toolbar-cluster">
                                         <a href="{{ route('admin.employees.show', $employee) }}" class="btn btn-sm btn-outline-primary">View</a>
                                         <a href="{{ route('admin.employees.edit', $employee) }}" class="btn btn-sm btn-outline-warning">Edit</a>
-                                        <form method="POST" action="{{ route('admin.employees.destroy', $employee) }}" class="d-inline" onsubmit="return confirm('Delete this employee?')">
+                                        <form method="POST" action="{{ route('admin.employees.destroy', $employee) }}" class="d-inline" onsubmit="return confirm('Offboard this employee and remove them from all devices?')">
                                             @csrf
                                             @method('DELETE')
-                                            <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+                                            <button type="submit" class="btn btn-sm btn-outline-danger">Offboard</button>
                                         </form>
                                     </div>
                                 </td>

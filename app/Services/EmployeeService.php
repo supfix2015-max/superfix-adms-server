@@ -23,9 +23,24 @@ class EmployeeService
         return $this->repository->create($data);
     }
 
-    public function updateEmployee(int $employeeId, array $data): bool
+    public function updateEmployeeProfile(Employee $employee, array $data): Employee
     {
-        return $this->repository->update($employeeId, $data);
+        $targetStatus = Employee::normalizeStatus((string) ($data['status'] ?? $employee->status))
+            ?? Employee::normalizeStatus((string) $employee->status)
+            ?? Employee::STATUS_ACTIVE;
+
+        $data['status'] = $targetStatus;
+        $data = $this->applyLifecycleTimestamps($employee, $data, $targetStatus);
+
+        if (Employee::shouldRemoveFromDevices($targetStatus)) {
+            $this->archiveEmployee($employee, $targetStatus, $data);
+
+            return $employee->fresh();
+        }
+
+        $this->repository->update($employee->id, $data);
+
+        return $employee->fresh();
     }
 
     public function getEmployee(int $employeeId): ?Employee
@@ -65,17 +80,41 @@ class EmployeeService
 
     public function activateEmployee(int $employeeId): bool
     {
-        return $this->repository->update($employeeId, ['status' => 'active']);
+        $employee = $this->getEmployee($employeeId);
+
+        if (! $employee) {
+            return false;
+        }
+
+        $this->updateEmployeeProfile($employee, ['status' => Employee::STATUS_ACTIVE]);
+
+        return true;
     }
 
     public function deactivateEmployee(int $employeeId): bool
     {
-        return $this->repository->update($employeeId, ['status' => 'inactive']);
+        $employee = $this->getEmployee($employeeId);
+
+        if (! $employee) {
+            return false;
+        }
+
+        $this->updateEmployeeProfile($employee, ['status' => Employee::STATUS_INACTIVE]);
+
+        return true;
     }
 
     public function suspendEmployee(int $employeeId): bool
     {
-        return $this->repository->update($employeeId, ['status' => 'suspended']);
+        $employee = $this->getEmployee($employeeId);
+
+        if (! $employee) {
+            return false;
+        }
+
+        $this->updateEmployeeProfile($employee, ['status' => Employee::STATUS_SUSPENDED]);
+
+        return true;
     }
 
     public function getDepartments()
@@ -97,33 +136,7 @@ class EmployeeService
             throw new \InvalidArgumentException('Employee not found.');
         }
 
-        $devicePin = $this->resolveDevicePin($employee);
-        $deviceTargets = 0;
-        $queuedDeviceCommands = 0;
-        $deletedPendingCommands = 0;
-
-        DB::transaction(function () use (
-            $employee,
-            $devicePin,
-            &$deviceTargets,
-            &$queuedDeviceCommands,
-            &$deletedPendingCommands,
-        ): void {
-            $deletedPendingCommands = $this->deletePendingEmployeeCommands($employee, $devicePin);
-            [$deviceTargets, $queuedDeviceCommands] = $this->queueDeviceDeletionCommands($employee, $devicePin);
-            $this->cleanupStoredEmployeeData($employee);
-
-            $employee->forceDelete();
-        });
-
-        return [
-            'employee_id' => $employee->employee_id,
-            'employee_name' => $employee->full_name,
-            'device_pin' => $devicePin,
-            'device_targets' => $deviceTargets,
-            'queued_device_commands' => $queuedDeviceCommands,
-            'deleted_pending_commands' => $deletedPendingCommands,
-        ];
+        return $this->archiveEmployee($employee, Employee::STATUS_TERMINATED);
     }
 
     public function importEmployees(array $employees): array
@@ -136,6 +149,10 @@ class EmployeeService
 
         foreach ($employees as $index => $employeeData) {
             try {
+                if (isset($employeeData['status'])) {
+                    $employeeData['status'] = Employee::normalizeStatus((string) $employeeData['status']) ?? Employee::STATUS_ACTIVE;
+                }
+
                 // Check if employee already exists by ID
                 $existing = $this->repository->findByEmployeeId($employeeData['employee_id']);
                 if ($existing) {
@@ -155,6 +172,52 @@ class EmployeeService
         }
 
         return $results;
+    }
+
+    private function archiveEmployee(Employee $employee, string $status, array $attributes = []): array
+    {
+        $devicePin = $this->resolveDevicePin($employee);
+        $deviceTargets = 0;
+        $queuedDeviceCommands = 0;
+        $deletedPendingCommands = 0;
+        $originalEmployeeId = $employee->employee_id;
+        $originalEmployeeName = $employee->full_name;
+        $attributes['status'] = $status;
+        $attributes = $this->applyLifecycleTimestamps($employee, $attributes, $status);
+
+        DB::transaction(function () use (
+            $employee,
+            $devicePin,
+            $attributes,
+            &$deviceTargets,
+            &$queuedDeviceCommands,
+            &$deletedPendingCommands,
+        ): void {
+            $deletedPendingCommands = $this->deletePendingEmployeeCommands($employee, $devicePin);
+            [$deviceTargets, $queuedDeviceCommands] = $this->queueDeviceDeletionCommands($employee, $devicePin);
+            $this->cleanupStoredEmployeeData($employee, true);
+
+            $employee->forceFill(array_merge($attributes, [
+                'device_id' => null,
+                'employee_id' => null,
+                'uid' => null,
+                'sync_uid' => null,
+                'sync_enabled' => false,
+                'sync_validation_errors' => null,
+                'last_sync_validated_at' => now(),
+            ]))->save();
+        });
+
+        return [
+            'employee_id' => $originalEmployeeId,
+            'employee_name' => $originalEmployeeName,
+            'device_pin' => $devicePin,
+            'device_targets' => $deviceTargets,
+            'queued_device_commands' => $queuedDeviceCommands,
+            'deleted_pending_commands' => $deletedPendingCommands,
+            'status' => $status,
+            'retained_record_id' => $employee->id,
+        ];
     }
 
     private function deletePendingEmployeeCommands(Employee $employee, ?string $devicePin): int
@@ -229,7 +292,7 @@ class EmployeeService
         return [$devices->count(), $queued];
     }
 
-    private function cleanupStoredEmployeeData(Employee $employee): void
+    private function cleanupStoredEmployeeData(Employee $employee, bool $preserveAttendanceLinks = false): void
     {
         EmployeeBiometric::query()
             ->where(function ($builder) use ($employee): void {
@@ -244,7 +307,7 @@ class EmployeeService
                 ->delete();
         }
 
-        if (Schema::hasTable('attendance_logs')) {
+        if (! $preserveAttendanceLinks && Schema::hasTable('attendance_logs')) {
             DB::table('attendance_logs')
                 ->where('employee_id', $employee->id)
                 ->update([
@@ -289,5 +352,18 @@ class EmployeeService
         }
 
         return null;
+    }
+
+    private function applyLifecycleTimestamps(Employee $employee, array $attributes, string $status): array
+    {
+        if ($status === Employee::STATUS_SUSPENDED && ! $employee->suspended_at) {
+            $attributes['suspended_at'] = now();
+        }
+
+        if (in_array($status, Employee::resignedStatuses(), true) && ! $employee->resigned_at) {
+            $attributes['resigned_at'] = now();
+        }
+
+        return $attributes;
     }
 }

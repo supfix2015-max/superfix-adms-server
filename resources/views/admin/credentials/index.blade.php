@@ -350,8 +350,8 @@
                                         <td class="font-monospace small">{{ $employee->employee_id }}</td>
                                         <td>{{ $employee->full_name ?: 'Unnamed Employee' }}</td>
                                         <td>
-                                            <span class="badge bg-{{ $employee->status === 'active' ? 'success' : 'secondary' }}">
-                                                {{ strtoupper((string) $employee->status) }}
+                                            <span class="badge bg-{{ $employee->status_badge_class }}">
+                                                {{ $employee->status_label }}
                                             </span>
                                         </td>
                                         <td>{{ $employee->department ?: '—' }}</td>
