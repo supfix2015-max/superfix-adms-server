@@ -328,7 +328,9 @@
                             <i class="bi bi-pencil me-1"></i>
                             Edit Device
                         </a>
-                        <a href="{{ route('admin.devices.refresh-token', $device) }}" class="btn btn-warning w-100" onclick="return confirm('Regenerate token?')">
+                        <form method="POST" action="{{ route('admin.devices.refresh-token', $device) }}" onsubmit="return confirm('Regenerate token?')">
+                            @csrf
+                            <button type="submit" class="btn btn-warning w-100">
                             <i class="bi bi-key me-1"></i>
                             Refresh API Token
                         </a>

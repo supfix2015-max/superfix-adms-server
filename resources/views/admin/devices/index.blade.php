@@ -99,7 +99,10 @@
                                         <div class="toolbar-cluster">
                                             <a href="{{ route('admin.devices.show', $device) }}" class="btn btn-sm btn-outline-primary">View</a>
                                             <a href="{{ route('admin.devices.edit', $device) }}" class="btn btn-sm btn-outline-warning">Edit</a>
-                                            <a href="{{ route('admin.devices.refresh-token', $device) }}" class="btn btn-sm btn-outline-info">Token</a>
+                                            <form method="POST" action="{{ route('admin.devices.refresh-token', $device) }}" class="d-inline" onsubmit="return confirm('Regenerate token?')">
+                                                @csrf
+                                                <button type="submit" class="btn btn-sm btn-outline-info">Token</button>
+                                            </form>
                                             <form method="POST" action="{{ route('admin.devices.destroy', $device) }}" class="d-inline" onsubmit="return confirm('Delete this device?')">
                                                 @csrf
                                                 @method('DELETE')

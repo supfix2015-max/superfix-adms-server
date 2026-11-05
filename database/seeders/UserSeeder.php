@@ -2,39 +2,25 @@
 
 namespace Database\Seeders;
 
-use Illuminate\Database\Seeder;
 use App\Models\User;
+use Illuminate\Database\Seeder;
+use Illuminate\Support\Facades\Hash;
 
 class UserSeeder extends Seeder
 {
     public function run(): void
     {
-        // Admin user
-        User::create([
-            'name' => 'Administrator',
-            'email' => 'admin@adms.local',
-            'password' => bcrypt('admin123'),
+        $email = env('INITIAL_ADMIN_EMAIL');
+        $password = env('INITIAL_ADMIN_PASSWORD');
+        if (! filter_var($email, FILTER_VALIDATE_EMAIL) || ! is_string($password) || strlen($password) < 20) {
+            $this->command?->warn('No admin created: configure a valid INITIAL_ADMIN_EMAIL and INITIAL_ADMIN_PASSWORD (20+ chars).');
+            return;
+        }
+
+        User::firstOrCreate(['email' => $email], [
+            'name' => 'Superfix ADMS Administrator',
+            'password' => Hash::make($password),
             'role' => 'admin',
-            'is_active' => true,
-            'email_verified_at' => now(),
-        ]);
-
-        // Operator user
-        User::create([
-            'name' => 'Operator',
-            'email' => 'operator@adms.local',
-            'password' => bcrypt('operator123'),
-            'role' => 'operator',
-            'is_active' => true,
-            'email_verified_at' => now(),
-        ]);
-
-        // Viewer user
-        User::create([
-            'name' => 'Viewer',
-            'email' => 'viewer@adms.local',
-            'password' => bcrypt('viewer123'),
-            'role' => 'viewer',
             'is_active' => true,
             'email_verified_at' => now(),
         ]);

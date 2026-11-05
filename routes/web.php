@@ -14,11 +14,11 @@ Route::get('/', function () {
     return redirect('/admin/dashboard');
 });
 
-Route::prefix('admin')->name('admin.')->group(function () {
+Route::middleware(['auth', 'admin'])->prefix('admin')->name('admin.')->group(function () {
     Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
 
     Route::resource('devices', DeviceController::class);
-    Route::get('devices/{device}/refresh-token', [DeviceController::class, 'refreshToken'])->name('devices.refresh-token');
+    Route::post('devices/{device}/refresh-token', [DeviceController::class, 'refreshToken'])->name('devices.refresh-token');
 
     Route::resource('employees', EmployeeController::class);
     Route::post('employees/{employee}/biometric-enrollment', [EmployeeController::class, 'enrollBiometric'])->name('employees.biometric-enrollment');
@@ -48,7 +48,7 @@ Route::prefix('admin')->name('admin.')->group(function () {
 
 require __DIR__.'/auth.php';
 
-Route::group([], function () {
+Route::middleware(['auth', 'admin'])->group(function () {
     Route::get('devices/attendance', [DeviceController::class, 'Attendance'])->name('devices.Attendance');
     Route::get('devices/daily', [DeviceController::class, 'daily'])->name('devices.daily');
     Route::get('devices/monthly', [DeviceController::class, 'monthly'])->name('devices.monthly');

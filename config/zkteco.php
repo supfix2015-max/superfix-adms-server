@@ -49,8 +49,8 @@ foreach (preg_split('/[,\r\n]+/', (string) env('ZKTECO_DEVICE_ENDPOINTS', '')) a
 }
 
 return [
-    'auto_register_devices' => env('ZKTECO_AUTO_REGISTER_DEVICES', true),
-    'require_token' => env('ZKTECO_REQUIRE_TOKEN', false),
+    'auto_register_devices' => env('ZKTECO_AUTO_REGISTER_DEVICES', false),
+    'require_token' => env('ZKTECO_REQUIRE_TOKEN', true),
     'token_query_key' => env('ZKTECO_TOKEN_QUERY_KEY', 'token'),
     'allowed_serial_numbers' => array_values($allowedSerials),
     'allowed_ips' => array_values($allowedIps),
@@ -60,7 +60,7 @@ return [
     'heartbeat_ttl_minutes' => (int) env('ZKTECO_HEARTBEAT_TTL_MINUTES', 5),
     'command_retry_after_seconds' => (int) env('ZKTECO_COMMAND_RETRY_AFTER_SECONDS', 30),
     'command_max_retries' => (int) env('ZKTECO_COMMAND_MAX_RETRIES', 3),
-    'auto_pull_employees_on_contact' => env('ZKTECO_AUTO_PULL_EMPLOYEES_ON_CONTACT', true),
+    'auto_pull_employees_on_contact' => env('ZKTECO_AUTO_PULL_EMPLOYEES_ON_CONTACT', false),
     'auto_pull_employees_cooldown_minutes' => (int) env('ZKTECO_AUTO_PULL_EMPLOYEES_COOLDOWN_MINUTES', 15),
     'auto_cleanup_legacy_users' => env('ZKTECO_AUTO_CLEANUP_LEGACY_USERS', false),
     'system_timezone' => env('ZKTECO_SYSTEM_TIMEZONE'),
