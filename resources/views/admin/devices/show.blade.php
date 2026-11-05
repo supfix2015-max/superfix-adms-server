@@ -331,9 +331,10 @@
                         <form method="POST" action="{{ route('admin.devices.refresh-token', $device) }}" onsubmit="return confirm('Regenerate token?')">
                             @csrf
                             <button type="submit" class="btn btn-warning w-100">
-                            <i class="bi bi-key me-1"></i>
-                            Refresh API Token
-                        </a>
+                                <i class="bi bi-key me-1"></i>
+                                Refresh API Token
+                            </button>
+                        </form>
                         <form method="POST" action="{{ route('admin.devices.destroy', $device) }}">
                             @csrf
                             @method('DELETE')
