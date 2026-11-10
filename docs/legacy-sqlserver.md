@@ -78,3 +78,31 @@ php artisan adms:audit-legacy-attendance
 ```
 
 This checks required columns, approximate counts, missing/duplicated employee badge numbers, latest legacy punch timestamp, and counts grouped by template type/format. It does not read template payloads or write records. Ensure the database login is read-only. The live fingerprint/employee importer and bulk device sync are **not** part of this change.
+
+## Reconciliation result (2026-11-10)
+
+Read-only comparison against the existing MySQL application found: 334 SQL Server employee rows, 2 existing MySQL rows, 1 missing badge, 4 missing names, no duplicate trimmed badge identifiers, no nonnumeric badge identifiers, and 329 eligible new employees. No source employees match MySQL employee identifiers as currently stored.
+
+## Safe employee import workflow
+
+An additional command is available:
+
+```bash
+php artisan adms:import-legacy-employees
+```
+
+This is always a **dry-run** unless `--apply` is explicitly provided. It skips missing/duplicate/nonnumeric badge identifiers, empty names, and employees already in MySQL. It never updates existing employees. Incoming badges are preserved exactly, including leading zeroes.
+
+**Do not import into the live MySQL database yet.** Create a dedicated staging MySQL database and restore a **verified backup** of the current ADMS MySQL schema/data into it. Use a separate staging database login with permissions limited to that staging database, and a container with `APP_ENV=staging` and `DB_DATABASE=adms_import_staging`. Do not copy the production application's `APP_KEY`, service access tokens, or device secrets unnecessarily into this staging environment. Keep the staging HTTP ADMS endpoints inaccessible to physical devices.
+
+Only on isolated staging, the limited **write** command is:
+
+```bash
+php artisan adms:import-legacy-employees --apply --limit=10
+```
+
+Write mode is blocked unless `APP_ENV` is `staging`, `testing` or `local`, and the configured target MySQL database name **ends in `_staging`**, with a limit between 1 and 500.
+
+New records are inserted with `status=INACTIVE`, `sync_enabled=false`, and no `sync_uid` or device association. Neither fingerprint templates nor historical attendance logs are imported by this command. An import may be repeated safely: existing employee codes are preserved.
+
+Review sample records in staging, and ensure no unauthorized device commands are queued or executed. After these checks, design a separate, deduplicated, incremental attendance import and a read-only biometric compatibility report.
