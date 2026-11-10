@@ -5,6 +5,11 @@
 @section('page_subtitle', 'Review processed attendance, unmatched logs, and export-ready transaction history across devices and employees.')
 
 @section('page_actions')
+    @if (config('legacy_attendance.browser_enabled', false))
+        <a href="{{ route('admin.legacy.index', ['tab' => 'attendance']) }}" class="btn btn-outline-primary">
+            <i class="bi bi-database me-1"></i> Original SQL Server Attendance
+        </a>
+    @endif
     <a href="{{ route('admin.attendance.export', $filters) }}" class="btn btn-success">
         <i class="bi bi-download me-1"></i>
         Export CSV
