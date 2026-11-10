@@ -90,12 +90,17 @@ class AuditLegacyAttendanceCommand extends Command
                      (SELECT MAX(VerifyTime) FROM dbo.Attendance) AS LastAttendance"
             );
 
+            $lastAttendance = $integrity->LastAttendance;
+            $lastAttendanceText = $lastAttendance instanceof \DateTimeInterface
+                ? $lastAttendance->format('Y-m-d H:i:s')
+                : (string) ($lastAttendance ?? 'not found');
+
             $this->table(
                 ['Check', 'Result'],
                 [
                     ['Employees without badge', (int) $integrity->MissingEmployeeBadges],
                     ['Duplicate employee badge groups', (int) $integrity->DuplicateEmployeeBadgeGroups],
-                    ['Latest historical attendance', $integrity->LastAttendance ?? 'not found'],
+                    ['Latest historical attendance', $lastAttendanceText],
                 ]
             );
 
