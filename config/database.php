@@ -78,6 +78,21 @@ return [
             'sslmode' => 'prefer',
         ],
 
+        // Optional legacy attendance database. The ADMS application's primary DB remains MySQL.
+        'legacy_sqlsrv' => [
+            'driver' => 'sqlsrv',
+            'host' => env('LEGACY_SQLSRV_HOST', ''),
+            'port' => env('LEGACY_SQLSRV_PORT', '1433'),
+            'database' => env('LEGACY_SQLSRV_DATABASE', ''),
+            'username' => env('LEGACY_SQLSRV_USERNAME', ''),
+            'password' => env('LEGACY_SQLSRV_PASSWORD', ''),
+            'charset' => 'utf8',
+            'prefix' => '',
+            'prefix_indexes' => true,
+            'encrypt' => env('LEGACY_SQLSRV_ENCRYPT', 'yes'),
+            'trust_server_certificate' => env('LEGACY_SQLSRV_TRUST_SERVER_CERTIFICATE', 'false'),
+        ],
+
         'sqlsrv' => [
             'driver' => 'sqlsrv',
             'url' => env('DATABASE_URL'),
