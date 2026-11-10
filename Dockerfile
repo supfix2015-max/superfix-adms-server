@@ -11,10 +11,18 @@ FROM php:8.3-fpm-bookworm
 ENV APP_ENV=production APP_DEBUG=false COMPOSER_ALLOW_SUPERUSER=1
 RUN apt-get update \
   && apt-get install -y --no-install-recommends nginx supervisor curl git unzip \
+     gnupg ca-certificates unixodbc-dev libgssapi-krb5-2 $PHPIZE_DEPS \
      libfreetype6-dev libjpeg62-turbo-dev libpng-dev libzip-dev libicu-dev \
      libonig-dev libxml2-dev \
   && docker-php-ext-configure gd --with-freetype --with-jpeg \
   && docker-php-ext-install -j"$(nproc)" pdo_mysql mbstring zip gd bcmath intl pcntl opcache \
+  && curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /usr/share/keyrings/microsoft-prod.gpg \
+  && DEB_ARCH="$(dpkg --print-architecture)" \
+  && echo "deb [arch=${DEB_ARCH} signed-by=/usr/share/keyrings/microsoft-prod.gpg] https://packages.microsoft.com/debian/12/prod bookworm main" > /etc/apt/sources.list.d/microsoft-prod.list \
+  && apt-get update \
+  && ACCEPT_EULA=Y apt-get install -y --no-install-recommends msodbcsql18 \
+  && pecl install sqlsrv pdo_sqlsrv \
+  && docker-php-ext-enable sqlsrv pdo_sqlsrv \
   && rm -rf /var/lib/apt/lists/*
 COPY --from=composer:2 /usr/bin/composer /usr/local/bin/composer
 WORKDIR /var/www/html
