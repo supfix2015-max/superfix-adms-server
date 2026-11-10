@@ -5,6 +5,14 @@
 @section('page_subtitle', 'Monitor device health, employee coverage, and today\'s attendance traffic from one control surface.')
 
 @section('content')
+    @if (config('legacy_attendance.browser_enabled', false))
+        <div class="alert alert-info">
+            <i class="bi bi-database me-1"></i>
+            Original historical records remain on SQL Server and are available
+            <a href="{{ route('admin.legacy.index') }}" class="alert-link">read-only in the original database browser</a>.
+            This dashboard continues to reflect ADMS MySQL device uploads.
+        </div>
+    @endif
     <div class="metric-grid">
         <div class="card metric-card">
             <div class="card-body">
