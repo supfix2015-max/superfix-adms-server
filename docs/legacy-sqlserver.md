@@ -83,26 +83,29 @@ This checks required columns, approximate counts, missing/duplicated employee ba
 
 Read-only comparison against the existing MySQL application found: 334 SQL Server employee rows, 2 existing MySQL rows, 1 missing badge, 4 missing names, no duplicate trimmed badge identifiers, no nonnumeric badge identifiers, and 329 eligible new employees. No source employees match MySQL employee identifiers as currently stored.
 
-## Safe employee import workflow
+## Complete employee import workflow (including incomplete records)
 
-An additional command is available:
+The import policy now includes **every** \`Att2000_V4.dbo.Employee\` row, even if \`BadgeNumber\` or \`NAME\` is null/empty. The source SQL \`Employee.Id\` acts as a stable legacy record identifier. For missing or duplicated badges, the staging importer uses an **internal-only** \`LEGACY_REVIEW_ID_<Id>\` identifier in Laravel's \`employees.employee_id\`, **not** a genuine employee badge or device PIN. The original badge (if any), source SQL ID, and review flags are retained in \`employees.raw_payload\`.
 
-```bash
+Empty names get a visible fallback \`Legacy employee <Id> (name unavailable)\` so no employee record is dropped. Numeric badge identifiers are preserved as text, including leading zeros; nonnumeric badges are retained but remain unsyncable. Existing MySQL records are never overwritten. Existing codes may already be present and will be reported as preserved rather than inserted. **All newly imported records are \`INACTIVE\` and \`sync_enabled=false\`**; the importer sends no ADMS commands and copies no biometric templates.
+
+For the observed 334 legacy rows (1 missing badge, 4 blank names, 0 duplicate badges and 0 matches with the 2 current MySQL rows), the expected dry-run is **334 new candidates**, for a combined count of approximately **336** after a complete staging import. A subsequent rerun should report 0 new candidates when all 334 imported rows already exist.
+
+**Do not import into live MySQL yet.** Create a distinct staging MySQL database, restore/replicate the current ADMS MySQL schema and data from a verified backup, and use a separate staging MySQL login. Never point staging to the production DB. Use a non-public staging container without physical device ADMS ingress.
+
+After setting \`DB_CONNECTION=mysql\`, \`APP_ENV=staging\`, \`DB_DATABASE=adms_import_staging\` and the remaining staging MySQL + read-only legacy SQL Server credentials:
+
+\`\`\`bash
+# Read-only preview, includes incomplete records:
 php artisan adms:import-legacy-employees
-```
 
-This is always a **dry-run** unless `--apply` is explicitly provided. It skips missing/duplicate/nonnumeric badge identifiers, empty names, and employees already in MySQL. It never updates existing employees. Incoming badges are preserved exactly, including leading zeroes.
-
-**Do not import into the live MySQL database yet.** Create a dedicated staging MySQL database and restore a **verified backup** of the current ADMS MySQL schema/data into it. Use a separate staging database login with permissions limited to that staging database, and a container with `APP_ENV=staging` and `DB_DATABASE=adms_import_staging`. Do not copy the production application's `APP_KEY`, service access tokens, or device secrets unnecessarily into this staging environment. Keep the staging HTTP ADMS endpoints inaccessible to physical devices.
-
-Only on isolated staging, the limited **write** command is:
-
-```bash
+# Staging-only writes, limited batch for review:
 php artisan adms:import-legacy-employees --apply --limit=10
-```
 
-Write mode is blocked unless `APP_ENV` is `staging`, `testing` or `local`, and the configured target MySQL database name **ends in `_staging`**, with a limit between 1 and 500.
+# After checking staging results, import remaining eligible rows:
+php artisan adms:import-legacy-employees --apply --limit=500
+\`\`\`
 
-New records are inserted with `status=INACTIVE`, `sync_enabled=false`, and no `sync_uid` or device association. Neither fingerprint templates nor historical attendance logs are imported by this command. An import may be repeated safely: existing employee codes are preserved.
+Write mode is blocked unless \`APP_ENV\` is staging/testing/local, the MySQL database name ends with \`_staging\`, and \`--limit\` is 1–500. This is not a substitute for least-privilege MySQL credentials and a verified backup.
 
-Review sample records in staging, and ensure no unauthorized device commands are queued or executed. After these checks, design a separate, deduplicated, incremental attendance import and a read-only biometric compatibility report.
+**Before rolling this out to production**, review the five incomplete legacy records, reconcile historical attendance mapping, and test that changing employee status cannot trigger premature device synchronization. SQL \`Employee.Id\` is **not** the ADMS ZKTeco PIN, and any internal placeholder must never be sent to a device.
