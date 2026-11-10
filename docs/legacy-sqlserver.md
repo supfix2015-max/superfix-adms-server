@@ -52,3 +52,29 @@ The commands query only `INFORMATION_SCHEMA.TABLES` and `INFORMATION_SCHEMA.COLU
 5. Test on backup databases, cut over only after data reconciliation, and keep a rollback plan.
 
 **Never** run `php artisan migrate` with `DB_CONNECTION=legacy_sqlsrv`. That would target the old database.
+
+## Verified source schema (from SQL Server metadata, 2026-11-10)
+
+The user confirmed the following column mappings in `Att2000_V4`:
+
+| Legacy table and column | Laravel target / intended use |
+| --- | --- |
+| `Employee.BadgeNumber` | `employees.employee_id` (external employee code; check for duplicates) |
+| `Employee.NAME` | `employees.name` |
+| `Employee.CardNo` | `employees.card_no` |
+| `Attendance.BadgeNumber` | `attendance_logs.employee_code` |
+| `Attendance.VerifyTime` | `attendance_logs.log_time` (confirm timezone and source semantics) |
+| `Attendance.DeviceSerialNumber` | link to `devices.serial_number` |
+| `Device.DeviceSerialNumber` | `devices.serial_number` (verify physical device ownership and ADMS protocol) |
+| `EmployeeTemplate.BadgeNumber` | link template to employee by code, not by internal numeric PK |
+| `EmployeeTemplate.Template` (`image`) | binary template; format and compatibility need validation before sync |
+
+The source contained 334 `Employee` records, 584,196 `Attendance` records, 771 `EmployeeTemplate` records, and 22 `Device` records when checked. Counts may change and do not prove all physical devices are online. The `ShiftedAttendance` table must not be merged blindly with `Attendance`; it may represent a derived view of punches rather than independent physical events.
+
+For a **read-only** connection/schema/data-quality audit of these four verified tables, run:
+
+```bash
+php artisan adms:audit-legacy-attendance
+```
+
+This checks required columns, approximate counts, missing/duplicated employee badge numbers, latest legacy punch timestamp, and counts grouped by template type/format. It does not read template payloads or write records. Ensure the database login is read-only. The live fingerprint/employee importer and bulk device sync are **not** part of this change.
