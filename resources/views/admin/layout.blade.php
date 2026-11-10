@@ -35,6 +35,12 @@
             'label' => 'Attendance',
         ],
         [
+            'route' => route('admin.legacy.index'),
+            'match' => 'admin.legacy.*',
+            'icon' => 'bi-database-fill-lock',
+            'label' => 'Original SQL Server',
+        ],
+        [
             'route' => route('admin.commands.index'),
             'match' => 'admin.commands.*',
             'icon' => 'bi-terminal-fill',
