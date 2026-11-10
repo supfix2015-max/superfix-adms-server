@@ -5,6 +5,11 @@
 @section('page_subtitle', 'Track terminal health, connectivity, and command workflows across the full registered device fleet.')
 
 @section('page_actions')
+    @if (config('legacy_attendance.browser_enabled', false))
+        <a href="{{ route('admin.legacy.index', ['tab' => 'devices']) }}" class="btn btn-outline-primary">
+            <i class="bi bi-database me-1"></i> Original SQL Server Devices
+        </a>
+    @endif
     <a href="{{ route('admin.devices.create') }}" class="btn btn-success">
         <i class="bi bi-plus-lg me-1"></i>
         Register Device
