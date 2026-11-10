@@ -36,6 +36,8 @@ RUN mkdir -p storage/app/public storage/framework/cache/data storage/framework/s
   && php -l app/Console/Commands/AuditLegacyAttendanceCommand.php \
   && php -l app/Console/Commands/PreviewLegacyEmployeeMergeCommand.php \
   && php -l app/Console/Commands/ImportLegacyEmployeesCommand.php \
+  && php -l app/Http/Controllers/Admin/LegacyAttendanceController.php \
+  && php -l config/legacy_attendance.php \
   && chown -R www-data:www-data storage bootstrap/cache
 COPY docker/nginx.conf /etc/nginx/sites-available/default
 COPY docker/supervisord.conf /etc/supervisor/conf.d/superfix-adms.conf
