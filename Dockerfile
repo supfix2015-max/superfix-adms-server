@@ -21,7 +21,8 @@ RUN apt-get update \
   && echo "deb [arch=${DEB_ARCH} signed-by=/usr/share/keyrings/microsoft-prod.gpg] https://packages.microsoft.com/debian/12/prod bookworm main" > /etc/apt/sources.list.d/microsoft-prod.list \
   && apt-get update \
   && ACCEPT_EULA=Y apt-get install -y --no-install-recommends msodbcsql18 \
-  && pecl install sqlsrv pdo_sqlsrv \
+  && pecl install sqlsrv \
+  && pecl install pdo_sqlsrv \
   && docker-php-ext-enable sqlsrv pdo_sqlsrv \
   && rm -rf /var/lib/apt/lists/*
 COPY --from=composer:2 /usr/bin/composer /usr/local/bin/composer
@@ -31,6 +32,7 @@ COPY --from=frontend /src/public/build ./public/build
 RUN mkdir -p storage/app/public storage/framework/cache/data storage/framework/sessions storage/framework/views storage/logs bootstrap/cache \
   && composer install --no-dev --no-interaction --prefer-dist --no-progress --optimize-autoloader \
   && php -l routes/web.php && php -l routes/device.php && php -l app/Http/Middleware/AdmsPilotGate.php \
+  && php -l app/Console/Commands/InspectLegacySqlServerCommand.php \
   && chown -R www-data:www-data storage bootstrap/cache
 COPY docker/nginx.conf /etc/nginx/sites-available/default
 COPY docker/supervisord.conf /etc/supervisor/conf.d/superfix-adms.conf
