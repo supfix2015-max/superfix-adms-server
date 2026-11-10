@@ -85,17 +85,17 @@ Read-only comparison against the existing MySQL application found: 334 SQL Serve
 
 ## Complete employee import workflow (including incomplete records)
 
-The import policy now includes **every** \`Att2000_V4.dbo.Employee\` row, even if \`BadgeNumber\` or \`NAME\` is null/empty. The source SQL \`Employee.Id\` acts as a stable legacy record identifier. For missing or duplicated badges, the staging importer uses an **internal-only** \`LEGACY_REVIEW_ID_<Id>\` identifier in Laravel's \`employees.employee_id\`, **not** a genuine employee badge or device PIN. The original badge (if any), source SQL ID, and review flags are retained in \`employees.raw_payload\`.
+The import policy now includes **every** `Att2000_V4.dbo.Employee` row, even if `BadgeNumber` or `NAME` is null/empty. The source SQL `Employee.Id` acts as a stable legacy record identifier. For missing or duplicated badges, the staging importer uses an **internal-only** `LEGACY_REVIEW_ID_<Id>` identifier in Laravel's `employees.employee_id`, **not** a genuine employee badge or device PIN. The original badge (if any), source SQL ID, and review flags are retained in `employees.raw_payload`.
 
-Empty names get a visible fallback \`Legacy employee <Id> (name unavailable)\` so no employee record is dropped. Numeric badge identifiers are preserved as text, including leading zeros; nonnumeric badges are retained but remain unsyncable. Existing MySQL records are never overwritten. Existing codes may already be present and will be reported as preserved rather than inserted. **All newly imported records are \`INACTIVE\` and \`sync_enabled=false\`**; the importer sends no ADMS commands and copies no biometric templates.
+Empty names get a visible fallback `Legacy employee <Id> (name unavailable)` so no employee record is dropped. Numeric badge identifiers are preserved as text, including leading zeros; nonnumeric badges are retained but remain unsyncable. Existing MySQL records are never overwritten. Existing codes may already be present and will be reported as preserved rather than inserted. **All newly imported records are `INACTIVE` and `sync_enabled=false`**; the importer sends no ADMS commands and copies no biometric templates.
 
 For the observed 334 legacy rows (1 missing badge, 4 blank names, 0 duplicate badges and 0 matches with the 2 current MySQL rows), the expected dry-run is **334 new candidates**, for a combined count of approximately **336** after a complete staging import. A subsequent rerun should report 0 new candidates when all 334 imported rows already exist.
 
 **Do not import into live MySQL yet.** Create a distinct staging MySQL database, restore/replicate the current ADMS MySQL schema and data from a verified backup, and use a separate staging MySQL login. Never point staging to the production DB. Use a non-public staging container without physical device ADMS ingress.
 
-After setting \`DB_CONNECTION=mysql\`, \`APP_ENV=staging\`, \`DB_DATABASE=adms_import_staging\` and the remaining staging MySQL + read-only legacy SQL Server credentials:
+After setting `DB_CONNECTION=mysql`, `APP_ENV=staging`, `DB_DATABASE=adms_import_staging` and the remaining staging MySQL + read-only legacy SQL Server credentials:
 
-\`\`\`bash
+```bash
 # Read-only preview, includes incomplete records:
 php artisan adms:import-legacy-employees
 
@@ -104,8 +104,8 @@ php artisan adms:import-legacy-employees --apply --limit=10
 
 # After checking staging results, import remaining eligible rows:
 php artisan adms:import-legacy-employees --apply --limit=500
-\`\`\`
+```
 
-Write mode is blocked unless \`APP_ENV\` is staging/testing/local, the MySQL database name ends with \`_staging\`, and \`--limit\` is 1–500. This is not a substitute for least-privilege MySQL credentials and a verified backup.
+Write mode is blocked unless `APP_ENV` is staging/testing/local, the MySQL database name ends with `_staging`, and `--limit` is 1–500. This is not a substitute for least-privilege MySQL credentials and a verified backup.
 
-**Before rolling this out to production**, review the five incomplete legacy records, reconcile historical attendance mapping, and test that changing employee status cannot trigger premature device synchronization. SQL \`Employee.Id\` is **not** the ADMS ZKTeco PIN, and any internal placeholder must never be sent to a device.
+**Before rolling this out to production**, review the five incomplete legacy records, reconcile historical attendance mapping, and test that changing employee status cannot trigger premature device synchronization. SQL `Employee.Id` is **not** the ADMS ZKTeco PIN, and any internal placeholder must never be sent to a device.
