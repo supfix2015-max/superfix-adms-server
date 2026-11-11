@@ -80,7 +80,7 @@ class LegacyAttendanceWriter
             $inserted += $db->transaction(function () use ($db, $serial, $badge, $localTime, $state, $verify): int {
                 // Serialize retries from concurrent polls without adding tables/indexes
                 // to the ORIGINAL SQL Server database.
-                $lockName = 'adms-attendance:'.hash('sha256', implode('|', [$serial, $badge, $localTime]));
+                $lockName = 'adms-attendance:'.hash('sha256', implode('|', [$serial, $badge, $localTime, $state]));
                 $lock = $db->selectOne(
                     "SET NOCOUNT ON;
                      DECLARE @result int;
@@ -101,6 +101,7 @@ class LegacyAttendanceWriter
                     ->where('BadgeNumber', $badge)
                     ->where('DeviceSerialNumber', $serial)
                     ->where('VerifyTime', $localTime)
+                    ->where('Status', $state)
                     ->exists();
 
                 if ($exists) {
