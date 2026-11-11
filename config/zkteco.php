@@ -60,6 +60,7 @@ return [
     'heartbeat_ttl_minutes' => (int) env('ZKTECO_HEARTBEAT_TTL_MINUTES', 5),
     'command_retry_after_seconds' => (int) env('ZKTECO_COMMAND_RETRY_AFTER_SECONDS', 30),
     'command_max_retries' => (int) env('ZKTECO_COMMAND_MAX_RETRIES', 3),
+    'dispatch_commands' => env('ZKTECO_DISPATCH_COMMANDS', ! in_array(env('APP_ENV', 'production'), ['staging', 'testing'], true)),
     'auto_pull_employees_on_contact' => env('ZKTECO_AUTO_PULL_EMPLOYEES_ON_CONTACT', false),
     'auto_pull_employees_cooldown_minutes' => (int) env('ZKTECO_AUTO_PULL_EMPLOYEES_COOLDOWN_MINUTES', 15),
     'auto_cleanup_legacy_users' => env('ZKTECO_AUTO_CLEANUP_LEGACY_USERS', false),
