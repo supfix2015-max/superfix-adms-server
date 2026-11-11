@@ -110,3 +110,17 @@ php artisan route:list --path=iclock
 ```
 
 This audit is SELECT-only and will not emit passwords, fingerprint template content, or employee names.
+
+## 2026-11-11 write readiness result
+
+Read-only `adms:legacy-write-readiness --serial=BZD5261200843` succeeded against the deployed `Att2000_V4`: the only non-nullable field in `dbo.Attendance` is identity `Id`, and `InsertDate` has a SQL default. Historical values include `Check-In`, `Check-Out`, `Overtime-In`, `Overtime-Out` and `FingerPrint`, `Password`, plus literal verification `2`. Historical device/punch rows for the UA300 test serial are both zero.
+
+The updated `LegacyAttendanceValueMapper` uses raw ZKTeco ATTLOG status 0/1/2/3/4/5 to preserve individual directions (especially overtime-in/out); ambiguous/unsupported status values now fail closed rather than inventing a generic `Overtime` value. Raw verification code `2` is preserved as found in the historical database. Run `php artisan test --filter=LegacyAttendanceValueMapperTest` on the new test build prior to enabling writes.
+
+After creating the limited writer login, run this **read-only** permission audit in the test container:
+
+```bash
+php artisan adms:legacy-write-readiness --serial=BZD5261200843 --check-writer
+```
+
+Only a writer with SELECT+INSERT on `dbo.Attendance`, without UPDATE/DELETE or template access, is accepted. This checks permissions but does not actually INSERT. A separate write pilot, inspected on both original SQL Server and MySQL, must be tested with an actual UA300 punch before any wider rollout.
