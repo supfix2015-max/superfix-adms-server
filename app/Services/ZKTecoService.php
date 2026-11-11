@@ -602,6 +602,13 @@ class ZKTecoService
             ];
         }
 
+        // Under explicit cutover, write first to the ORIGINAL SQL Server DB.
+        // If that fails, return an error (not OK) to the device; a retry will
+        // check and avoid duplicating the original SQL Server punch.
+        if (config('legacy_attendance.attendance_write_enabled', false)) {
+            app(LegacyAttendanceWriter::class)->persist($device, $preparedRecords);
+        }
+
         $newHashes = [];
 
         DB::transaction(function () use ($device, $preparedRecords, &$newHashes): void {
