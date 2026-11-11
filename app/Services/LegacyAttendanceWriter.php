@@ -52,9 +52,9 @@ class LegacyAttendanceWriter
             if (! $date instanceof \DateTimeInterface) {
                 throw new RuntimeException('Missing normalized attendance timestamp.');
             }
-            $deviceTimezone = (string) config('zkteco.device_timezone', '');
+            $deviceTimezone = (string) config('legacy_attendance.attendance_wallclock_timezone', '');
             if ($deviceTimezone === '') {
-                throw new RuntimeException('Configure ZKTECO_DEVICE_TIMEZONE before direct SQL writes.');
+                throw new RuntimeException('Configure LEGACY_SQLSRV_ATTENDANCE_TIMEZONE before direct SQL writes.');
             }
             $localTime = \Carbon\CarbonImmutable::instance($date)
                 ->setTimezone($deviceTimezone)
@@ -113,7 +113,7 @@ class LegacyAttendanceWriter
                     'DeviceSerialNumber' => $serial,
                     'VerifyType' => $verify,
                     'Status' => $state,
-                    'InsertDate' => now($deviceTimezone = (string) config('zkteco.device_timezone'))->format('Y-m-d H:i:s'),
+                    'InsertDate' => now(config('legacy_attendance.attendance_wallclock_timezone'))->format('Y-m-d H:i:s'),
                 ]);
 
                 return 1;
