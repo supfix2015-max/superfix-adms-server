@@ -37,6 +37,7 @@ RUN mkdir -p storage/app/public storage/framework/cache/data storage/framework/s
   && php -l app/Http/Controllers/Admin/LegacyAttendanceController.php \
   && php -l app/Console/Commands/InspectLegacyAttendanceWriteReadinessCommand.php \
   && php -l app/Services/LegacyAttendanceWriter.php \
+  && php -l app/Services/LegacyAttendanceValueMapper.php \
   && php -l config/legacy_attendance.php \
   && chown -R www-data:www-data storage bootstrap/cache
 COPY docker/nginx.conf /etc/nginx/sites-available/default
