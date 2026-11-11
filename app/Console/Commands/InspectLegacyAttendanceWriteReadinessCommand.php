@@ -13,7 +13,8 @@ use Throwable;
 class InspectLegacyAttendanceWriteReadinessCommand extends Command
 {
     protected $signature = 'adms:legacy-write-readiness
-                            {--serial= : Optional physical device serial to check against historical records}';
+                            {--serial= : Optional physical device serial to check against historical records}
+                            {--check-writer : Validate limited SQL Server writer account permissions without writing}';
 
     protected $description = 'Check Att2000_V4 Attendance INSERT requirements and existing values (read-only)';
 
@@ -91,6 +92,39 @@ class InspectLegacyAttendanceWriteReadinessCommand extends Command
                     ['Legacy registered device rows', $found],
                     ['Historical attendance rows', $punches],
                 ]);
+            }
+
+
+            if ($this->option('check-writer')) {
+                $writer = DB::connection('legacy_sqlsrv_writer');
+                $permissions = $writer->selectOne(
+                    "SELECT DB_NAME() AS DatabaseName,
+                            USER_NAME() AS DatabaseUser,
+                            HAS_PERMS_BY_NAME(N'dbo.Attendance', N'OBJECT', N'SELECT') AS CanSelect,
+                            HAS_PERMS_BY_NAME(N'dbo.Attendance', N'OBJECT', N'INSERT') AS CanInsert,
+                            HAS_PERMS_BY_NAME(N'dbo.Attendance', N'OBJECT', N'UPDATE') AS CanUpdate,
+                            HAS_PERMS_BY_NAME(N'dbo.Attendance', N'OBJECT', N'DELETE') AS CanDelete,
+                            HAS_PERMS_BY_NAME(N'dbo.EmployeeTemplate', N'OBJECT', N'SELECT') AS CanReadTemplates"
+                );
+
+                $this->table(['Writer permission', 'Result'], [
+                    ['Database', $permissions->DatabaseName],
+                    ['Account', $permissions->DatabaseUser],
+                    ['Attendance SELECT', (int) $permissions->CanSelect === 1 ? 'YES' : 'NO'],
+                    ['Attendance INSERT', (int) $permissions->CanInsert === 1 ? 'YES' : 'NO'],
+                    ['Attendance UPDATE', (int) $permissions->CanUpdate === 1 ? 'YES — BLOCKER' : 'NO'],
+                    ['Attendance DELETE', (int) $permissions->CanDelete === 1 ? 'YES — BLOCKER' : 'NO'],
+                    ['Biometric templates SELECT', (int) $permissions->CanReadTemplates === 1 ? 'YES — BLOCKER' : 'NO'],
+                ]);
+
+                if ($permissions->DatabaseName !== (string) config('database.connections.legacy_sqlsrv_writer.database')
+                    || (int) $permissions->CanSelect !== 1 || (int) $permissions->CanInsert !== 1
+                    || (int) $permissions->CanUpdate === 1 || (int) $permissions->CanDelete === 1
+                    || (int) $permissions->CanReadTemplates === 1) {
+                    $this->error('Writer account lacks required least-privilege isolation. DO NOT enable device cutover.');
+                    return self::FAILURE;
+                }
+                $this->info('Writer credentials and restricted SQL permissions verified without modifying data.');
             }
 
             $this->warn('No records or schema changed; direct-write mode remains DISABLED by default.');
