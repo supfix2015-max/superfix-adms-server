@@ -60,21 +60,8 @@ class LegacyAttendanceWriter
                 ->setTimezone($deviceTimezone)
                 ->format('Y-m-d H:i:s');
 
-            $state = match ((string) ($record['log_type'] ?? '')) {
-                'checkin' => 'Check-In',
-                'checkout' => 'Check-Out',
-                'break' => 'Break',
-                'overtime' => 'Overtime',
-                default => 'Unknown',
-            };
-            $verify = match ((string) ($record['verify_type'] ?? '')) {
-                'fingerprint' => 'FingerPrint',
-                'face' => 'Face',
-                'rfid' => 'Card',
-                'password' => 'Password',
-                'palm' => 'Palm',
-                default => 'Unknown',
-            };
+            $state = LegacyAttendanceValueMapper::status($record);
+            $verify = LegacyAttendanceValueMapper::verify($record);
             $badge = trim((string) $record['employee_code']);
 
             $inserted += $db->transaction(function () use ($db, $serial, $badge, $localTime, $state, $verify): int {
