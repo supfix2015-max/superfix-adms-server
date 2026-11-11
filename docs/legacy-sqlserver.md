@@ -66,3 +66,47 @@ Then sign in as an authorized admin and open `/admin/legacy`. Compare the counts
 Before reconnecting every ZKTeco device, decide where new attendance punches must be stored. To write to original SQL Server, a separate, tested adapter must implement `Attendance` INSERT semantics and duplicate protections, and reconcile `BadgeNumber`/device serial. This phase must not run while the legacy SQL login is read-only. Templates need explicit compatibility checks before being replayed to devices. The existing ADMS pilot serial allowlist should remain enabled, with devices moved **one by one**, beginning with UA300.
 
 No legacy database write, full network cutover, or SQL Server schema modification has been performed by this branch.
+
+
+## First live ADMS device pilot (2026-11-11)
+
+Direct SQL Server attendance write plumbing is now implemented behind **off by default** gates. This does not change the original database schema.
+
+**Before enabling it:**
+1. Run `php artisan adms:legacy-write-readiness --serial=BZD5261200843` from the deployed Laravel test container. Examine actual SQL Server required `Attendance` columns, historical Status/VerifyType values, and existing history for the pilot serial. Fix mappings if the report flags any non-null/non-default column or unexpected values.
+2. Verify an off-server SQL Server backup/restoration plan and that the original `Att2000_V4` database stays ONLINE.
+3. Establish a new SQL Server login (not `sa` or the read-only account), with only `SELECT, INSERT` on `dbo.Attendance`; do not grant UPDATE, DELETE, db_owner, or permissions to biometric tables. The writer uses `sp_getapplock` in a transaction for serial/time/badge/status deduplication. Test with real device punches and retries. Confirm that the permissions allow a transaction-scoped application lock.
+4. Require `LEGACY_SQLSRV_ATTENDANCE_TIMEZONE=Asia/Dubai` if the original SQL Server timestamps represent UAE device-local time. Validate against the prior record timestamps before going live.
+5. Enable only **one** explicit pilot serial on the device endpoint `at1.superfix.ae` (HTTP only if device model does not support HTTPS), with the admin interface on `https://at2.superfix.ae`. Prevent anonymous admin/password access on the HTTP device endpoint. Do not assume serial numbers alone authenticate a terminal. Keep token verification or other network controls when supported.
+
+The optional cutover config is:
+
+```dotenv
+# Remain FALSE until the above readiness checks/backup are complete.
+LEGACY_SQLSRV_ATTENDANCE_WRITE_ENABLED=false
+LEGACY_SQLSRV_ATTENDANCE_WRITE_SERIALS=BZD5261200843
+LEGACY_SQLSRV_ATTENDANCE_TIMEZONE=Asia/Dubai
+LEGACY_SQLSRV_WRITE_USERNAME=<new-limited-writer-login>
+LEGACY_SQLSRV_WRITE_PASSWORD=<secret>
+LEGACY_SQLSRV_WRITE_TRUST_SERVER_CERTIFICATE=false
+ZKTECO_DISPATCH_COMMANDS=false
+ZKTECO_AUTO_PULL_EMPLOYEES_ON_CONTACT=false
+ADMS_PILOT_ENABLED=false
+ADMS_PILOT_SERIALS=BZD5261200843
+ZKTECO_AUTO_REGISTER_DEVICES=false
+```
+
+After an approved one-device pilot, set `LEGACY_SQLSRV_ATTENDANCE_WRITE_ENABLED=true` and `ADMS_PILOT_ENABLED=true` only for the serial listed above. On receiving ATTLOG: the application **first** attempts a direct INSERT into original SQL Server Attendance using transaction lock plus existing-record lookup; if successful it also records its existing MySQL operational log, then returns OK to the terminal. Failure returns an error so the device can retry; idempotency checks prevent duplicate historical records. MySQL remains necessary for admin authentication, devices, callback logs, and command metadata.
+
+**Important:** Until a production write pilot is verified, the HTTP device endpoint must remain pilot-disabled. `ZKTECO_DISPATCH_COMMANDS=false` prevents sending queued commands through `/iclock/getrequest`, even if the MySQL staging copy has pending commands. The staging queue worker also remains off. Never turn on bulk user/fingerprint replays during this phase.
+
+The 22 rows in the legacy `Device` table are historic registrations, not confirmation of 22 connected devices. Verify physical serials and polling one by one, and do not attempt mass cutover or re-enrollment until the pilot and full template compatibility validation succeed.
+
+### Readiness / debug
+
+```bash
+php artisan adms:legacy-write-readiness --serial=BZD5261200843
+php artisan route:list --path=iclock
+```
+
+This audit is SELECT-only and will not emit passwords, fingerprint template content, or employee names.
