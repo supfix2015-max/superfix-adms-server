@@ -115,7 +115,7 @@ This audit is SELECT-only and will not emit passwords, fingerprint template cont
 
 Read-only `adms:legacy-write-readiness --serial=BZD5261200843` succeeded against the deployed `Att2000_V4`: the only non-nullable field in `dbo.Attendance` is identity `Id`, and `InsertDate` has a SQL default. Historical values include `Check-In`, `Check-Out`, `Overtime-In`, `Overtime-Out` and `FingerPrint`, `Password`, plus literal verification `2`. Historical device/punch rows for the UA300 test serial are both zero.
 
-The updated `LegacyAttendanceValueMapper` uses raw ZKTeco ATTLOG status 0/1/2/3/4/5 to preserve individual directions (especially overtime-in/out); ambiguous/unsupported status values now fail closed rather than inventing a generic `Overtime` value. Raw verification code `2` is preserved as found in the historical database. Run `php artisan test --filter=LegacyAttendanceValueMapperTest` on the new test build prior to enabling writes.
+The updated `LegacyAttendanceValueMapper` uses raw ZKTeco ATTLOG status 0/1/2/3/4/5 to preserve individual directions (especially overtime-in/out); ambiguous/unsupported status values now fail closed rather than inventing a generic `Overtime` value. Raw verification code `2` is preserved as found in the historical database. Run `php artisan test --filter=LegacyAttendanceValueMapperTest` in a development environment with dev dependencies (the production Docker image intentionally uses Composer `--no-dev`). For a production-image smoke check, use `php -r 'require "vendor/autoload.php"; echo App\\Services\\LegacyAttendanceValueMapper::status(["raw_payload" => ["Status" => "4"]]), "\\n";'` and expect `Overtime-In`.
 
 After creating the limited writer login, run this **read-only** permission audit in the test container:
 
@@ -124,3 +124,5 @@ php artisan adms:legacy-write-readiness --serial=BZD5261200843 --check-writer
 ```
 
 Only a writer with SELECT+INSERT on `dbo.Attendance`, without UPDATE/DELETE or template access, is accepted. This checks permissions but does not actually INSERT. A separate write pilot, inspected on both original SQL Server and MySQL, must be tested with an actual UA300 punch before any wider rollout.
+
+The pilot writer additionally checks every incoming employee `BadgeNumber` against original `dbo.Employee` using the existing read-only SQL connection **before** any write. A UA300 test user with a staging-only badge is rejected instead of creating an orphan punch; use a verified original `Employee.BadgeNumber` for an actual test punch. This does not create or modify employees.
