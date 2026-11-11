@@ -145,7 +145,7 @@
             </div>
         </div>
         <div class="card-footer">
-            {{ $rows->links('pagination::bootstrap-5') }}
+            {{ $rows->links('pagination::simple-bootstrap-5') }}
         </div>
     </div>
 @endsection
