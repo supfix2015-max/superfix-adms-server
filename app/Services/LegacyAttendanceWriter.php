@@ -37,6 +37,32 @@ class LegacyAttendanceWriter
             throw new RuntimeException('Dedicated legacy SQL Server write credentials are missing.');
         }
 
+        // A new punch must belong to an existing ORIGINAL SQL Server employee.
+        // Do not create orphan employee codes from UA300's staging-only users.
+        $badges = $records->pluck('employee_code')->map(
+            static fn ($code): string => trim((string) $code)
+        )->filter()->unique()->values();
+        if ($badges->isEmpty() || $records->contains(
+            static fn ($record): bool => ! is_array($record) || trim((string) ($record['employee_code'] ?? '')) === ''
+        )) {
+            throw new RuntimeException('No valid attendance badge identifiers.');
+        }
+
+        $legacyReader = DB::connection('legacy_sqlsrv');
+        foreach ($badges->chunk(500) as $chunk) {
+            $known = $legacyReader->table('dbo.Employee')
+                ->whereIn('BadgeNumber', $chunk->all())
+                ->pluck('BadgeNumber')
+                ->map(static fn ($value): string => trim((string) $value))
+                ->unique();
+
+            if ($known->count() !== $chunk->count()) {
+                throw new RuntimeException(
+                    'One or more device badge numbers are absent from Att2000_V4.Employee. No SQL Server punch was written.'
+                );
+            }
+        }
+
         $db = DB::connection('legacy_sqlsrv_writer');
         $this->assertSchemaCompatible($db);
 
