@@ -35,6 +35,10 @@ RUN mkdir -p storage/app/public storage/framework/cache/data storage/framework/s
   && php -l app/Console/Commands/InspectLegacySqlServerCommand.php \
   && php -l app/Console/Commands/AuditLegacyAttendanceCommand.php \
   && php -l app/Http/Controllers/Admin/LegacyAttendanceController.php \
+  && php -l app/Http/Controllers/Admin/LegacyAttendanceReportController.php \
+  && php -l app/Http/Controllers/Admin/LegacyDirectoryController.php \
+  && php -l app/Http/Controllers/Admin/LegacyFleetController.php \
+  && php -l database/migrations/2026_11_12_000002_add_license_requirement_to_adms_devices.php \
   && php -l app/Console/Commands/InspectLegacyAttendanceWriteReadinessCommand.php \
   && php -l app/Console/Commands/ImportMissingHiliAttendanceCommand.php \
   && php -l app/Services/LegacyAttendanceWriter.php \
