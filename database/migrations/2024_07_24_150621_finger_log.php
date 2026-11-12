@@ -19,7 +19,7 @@ return new class extends Migration
             $table->timestamp('created_at')->useCurrent();
 
             // Opsi 2: Menggunakan CURRENT_TIMESTAMP saat insert dan update
-            $table->timestamp('updated_at')->useCurrent()->useCurrentOnUpdate();
+            $table->timestamp('updated_at')->useCurrent();
 
         });
     }
