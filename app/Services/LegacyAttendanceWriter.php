@@ -28,9 +28,24 @@ class LegacyAttendanceWriter
         $serial = trim((string) $device->serial_number);
         $allowedSerials = config('legacy_attendance.attendance_write_serials', []);
 
-        if ($serial === '' || $allowedSerials === [] || ! in_array($serial, $allowedSerials, true)) {
+        $explicitlyAllowed = $serial !== '' && in_array($serial, $allowedSerials, true);
+
+        // Future rollout: only already registered original terminals can be
+        // enabled by the opt-in fleet switch. The office test UA300 is NOT
+        // historical, so it is not included in this mode.
+        $historicallyAllowed = false;
+        if (! $explicitlyAllowed && $serial !== ''
+            && config('legacy_attendance.attendance_write_all_registered', false)
+            && preg_match('/^[A-Za-z0-9._:-]{1,64}$/', $serial)) {
+            $historicallyAllowed = DB::connection('legacy_sqlsrv')
+                ->table('dbo.Device')
+                ->where('DeviceSerialNumber', $serial)
+                ->exists();
+        }
+
+        if (! $explicitlyAllowed && ! $historicallyAllowed) {
             // Never ACK a terminal that was mistakenly cut over without SQL write support.
-            throw new RuntimeException('Device is not allowlisted for original SQL Server attendance writes.');
+            throw new RuntimeException('Device is not allowed for original SQL Server attendance writes.');
         }
 
         if (trim((string) config('database.connections.legacy_sqlsrv_writer.username')) === '') {
