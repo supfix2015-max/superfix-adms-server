@@ -41,6 +41,7 @@ RUN mkdir -p storage/app/public storage/framework/cache/data storage/framework/s
   && php -l app/Services/LegacyDashboardService.php \
   && php -l config/legacy_attendance.php \
   && php -l config/database.php \
+  && php -l app/Console/Commands/AuditSqlServerOnlyApplicationCommand.php \
   && chown -R www-data:www-data storage bootstrap/cache
 COPY docker/nginx.conf /etc/nginx/sites-available/default
 COPY docker/supervisord.conf /etc/supervisor/conf.d/superfix-adms.conf
