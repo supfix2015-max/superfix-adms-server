@@ -61,3 +61,32 @@ php artisan adms:biocloud-ui-check
 - First & Last / Multi In-Out / Daily / Monthly are summary projections from original `dbo.Attendance`, not payroll verification or fully implemented shift-rule engines.
 - Vendor Edit License **checkbox** is implemented; vendor key activation intentionally not implemented.
 - If /admin/devices still shows the old table, ensure the redeployed branch and container image include the change to `DeviceController@index`, clear caches, reload page hard and check `route:list`. Merely navigating to the link does not deploy code.
+
+
+## 2026-11-12: SQL Server migration failure — solved in code, DBA path if needed
+
+User ran the target migration and SQL Server returned:
+`SQLSTATE[42000]: Cannot find the object "devices" because it does not exist or you do not have permissions`.
+The original migration used an UNQUALIFIED `Schema::table('devices', ...)`, while the actual operational table is specifically `Att2000_V4.adms.devices`. The new migration uses `Schema::connection('sqlsrv')->table('adms.devices', ...)` and checks the expected database/schema and exact original table object ID before any DDL.
+
+The application SQL login is intentionally limited and may lack **ALTER**, even when it can SELECT/INSERT the operational schema. The new readiness check distinguishes missing column, exact table visibility and ALTER privilege, and never changes data.
+
+Read-only diagnosis from V2 app Terminal:
+
+```bash
+cd /var/www/html
+php artisan tinker --execute='
+dump(DB::connection("sqlsrv")->selectOne("
+SELECT DB_NAME() AS db_name, SCHEMA_NAME() AS default_schema,
+ OBJECT_ID(N\x27adms.devices\x27, N\x27U\x27) AS table_id,
+ COL_LENGTH(N\x27adms.devices\x27, N\x27requires_license\x27) AS column_bytes,
+ HAS_PERMS_BY_NAME(N\x27adms.devices\x27,N\x27OBJECT\x27,N\x27ALTER\x27) AS can_alter
+"));'
+```
+
+- If `table_id` is non-null and `can_alter = 1`: redeploy corrected branch, run targeted migration (see above). No broader schema migrations.
+- If `table_id` is non-null and `can_alter = 0`: do NOT grant app login db_owner/db_ddladmin; a DBA must run `docs/sql/adms-devices-requires-license.sql` against the exact `Att2000_V4` database with a privileged login. It adds `adms.devices.requires_license BIT NOT NULL DEFAULT 0` if missing, never touches `dbo.Device` or any other original tables. Then rerun target migration under app user, which detects preexisting column and marks the migration `Ran` without DDL.
+- If `table_id` is NULL: do not attempt a DDL fix until the actual operational table and SQL login rights are diagnosed.
+- After: `php artisan migrate:status`, `php artisan optimize:clear`, `php artisan view:cache`, `php artisan adms:biocloud-ui-check` and verify the checkbox saves at `/admin/devices`.
+
+No change to Hili historical data, live writer allowlist or hourly device time synchronization.
