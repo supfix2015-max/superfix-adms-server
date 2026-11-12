@@ -27,6 +27,35 @@ class SystemClockService
         return $this->now()->format('Y-m-d\\TH:i:sP');
     }
 
+    /**
+     * ZKTeco PUSH SDK Appendix 5 OldEncodeTime (NOT Unix timestamp).
+     * Clock is encoded as a local wall clock at the server's configured
+     * device time zone, e.g. Asia/Dubai (UTC+04:00).
+     */
+    public function encodeForPushCommand(): int
+    {
+        $now = $this->now();
+        $year = (int) $now->format('Y');
+        $month = (int) $now->format('n');
+        $day = (int) $now->format('j');
+        $hour = (int) $now->format('G');
+        $minute = (int) $now->format('i');
+        $second = (int) $now->format('s');
+
+        return ((($year - 2000) * 12 * 31 + ($month - 1) * 31 + ($day - 1)) * 86400)
+            + (($hour * 60 + $minute) * 60) + $second;
+    }
+
+    /**
+     * Firmware-variant reply after SET OPTIONS DateTime command:
+     * DateTime=<OldEncodeTime>,ServerTZ=+0400
+     */
+    public function formatForRealtimeTimeResponse(): string
+    {
+        return 'DateTime='.$this->encodeForPushCommand()
+            .',ServerTZ='.$this->now()->format('O');
+    }
+
     public function normalizeForDevice(mixed $value): string
     {
         if ($value === null || $value === '') {
