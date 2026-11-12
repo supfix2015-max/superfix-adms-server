@@ -36,6 +36,7 @@ RUN mkdir -p storage/app/public storage/framework/cache/data storage/framework/s
   && php -l app/Console/Commands/AuditLegacyAttendanceCommand.php \
   && php -l app/Http/Controllers/Admin/LegacyAttendanceController.php \
   && php -l app/Console/Commands/InspectLegacyAttendanceWriteReadinessCommand.php \
+  && php -l app/Console/Commands/ImportMissingHiliAttendanceCommand.php \
   && php -l app/Services/LegacyAttendanceWriter.php \
   && php -l app/Services/LegacyAttendanceValueMapper.php \
   && php -l app/Services/LegacyDashboardService.php \
