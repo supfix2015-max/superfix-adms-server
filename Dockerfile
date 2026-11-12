@@ -45,6 +45,9 @@ RUN mkdir -p storage/app/public storage/framework/cache/data storage/framework/s
   && php -l app/Http/Controllers/Admin/DeviceConnectionStatusController.php \
   && php -l app/Console/Commands/ProvisionOfficeTestDeviceCommand.php \
   && php -l app/Console/Commands/ProvisionLegacyDevicesCommand.php \
+  && php -l app/Http/Controllers/Admin/CommandController.php \
+  && php -l app/Http/Middleware/AdmsPilotGate.php \
+  && php -l app/Services/ZKTecoService.php \
   && php -l database/migrations/2026_04_17_000007_add_production_adms_sync_support.php \
   && chown -R www-data:www-data storage bootstrap/cache
 COPY docker/nginx.conf /etc/nginx/sites-available/default
