@@ -13,6 +13,7 @@ use App\Models\RawLog;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -96,6 +97,38 @@ class ZKTecoService
         }
     }
 
+    /**
+     * Legacy PUSH variant: after a SET OPTIONS DateTime command the device
+     * may request /iclock/rtdata?SN=...&type=time.
+     */
+    public function handleRealtimeData(Request $request): string
+    {
+        $context = $this->buildContext($request, '/iclock/rtdata');
+        $rawLog = $this->createRawLog(null, $context);
+
+        try {
+            $device = $this->resolveDevice($request, $context);
+            $this->attachRawLogDevice($rawLog, $device);
+            $this->touchDevice($device, $request, $context);
+
+            if (! $request->isMethod('GET')
+                || strcasecmp(trim((string) $request->query('type', '')), 'time') !== 0) {
+                $this->finishRawLog($rawLog, 'processed', 0, ['mode' => 'unsupported_rtdata']);
+                return "OK\r\n";
+            }
+
+            $this->finishRawLog($rawLog, 'processed', 0, [
+                'mode' => 'realtime_time_sync',
+                'timezone' => $this->systemClockService->timezoneName(),
+            ]);
+
+            return $this->systemClockService->formatForRealtimeTimeResponse()."\r\n";
+        } catch (\Throwable $e) {
+            $this->finishRawLog($rawLog, 'failed', 0, $context['metadata'], $e->getMessage());
+            throw $e;
+        }
+    }
+
     public function handleGetRequest(Request $request): string
     {
         $context = $this->buildContext($request, '/iclock/getrequest');
@@ -106,10 +139,21 @@ class ZKTecoService
             $this->attachRawLogDevice($rawLog, $device);
             $this->touchDevice($device, $request, $context);
 
-            // Do not disclose queued commands to a claimed serial on the
-            // legacy HTTP receiver unless its device token is verified.
+            // Narrow time-only exception for firmware that cannot attach
+            // per-device authentication to HTTP PUSH polls. No sensitive
+            // queue entries, biometrics, or other commands are exposed.
             if (config('zkteco.command_require_token', true)
                 && ! $this->hasAuthenticatedDeviceToken($request, $device)) {
+                $clockOnly = $this->unverifiedLegacyClockCommand($device);
+                if ($clockOnly !== null) {
+                    $this->finishRawLog($rawLog, 'processed', 1, [
+                        'mode' => 'legacy_time_only_sent',
+                        'command' => 'SET OPTIONS DateTime',
+                        'authenticated' => false,
+                    ]);
+
+                    return $clockOnly."\r\n";
+                }
                 $this->finishRawLog($rawLog, 'processed', 0, [
                     'command' => null, 'command_authorization' => 'required',
                 ]);
@@ -172,9 +216,19 @@ class ZKTecoService
             $this->attachRawLogDevice($rawLog, $device);
             $this->touchDevice($device, $request, $context);
 
-            // A spoofed serial must not acknowledge or cancel pending work.
+            // A spoofed serial must never acknowledge an ordinary queued
+            // command. The only tokenless exception recognizes the exact
+            // temporary time-only command ID, and modifies no queue rows.
             if (config('zkteco.command_require_token', true)
                 && ! $this->hasAuthenticatedDeviceToken($request, $device)) {
+                if ($this->acceptTimeOnlyAcknowledgement($device, $context)) {
+                    $this->finishRawLog($rawLog, 'processed', 0, [
+                        'mode' => 'legacy_time_only_reply',
+                        'authenticated' => false,
+                    ]);
+                    return "OK\r\n";
+                }
+
                 throw new \Illuminate\Auth\Access\AuthorizationException('Device command callback authentication required');
             }
 
@@ -1017,6 +1071,72 @@ class ZKTecoService
             ->where('retry_count', '<', $maxRetries)
             ->orderBy('sent_at')
             ->first();
+    }
+
+    private function canUseLegacyTimeOnly(Device $device): bool
+    {
+        return config('adms_pilot.enabled', false)
+            && config('zkteco.command_require_token', true)
+            && config('zkteco.legacy_time_only_enabled', false)
+            && in_array(
+                trim((string) ($device->serial_number ?: $device->sn)),
+                config('zkteco.legacy_time_only_serials', []),
+                true
+            );
+    }
+
+    /**
+     * Returns exactly a date/time command and no operational command from the
+     * shared queue. Cache throttling prevents repeated clock changes on polls.
+     */
+    private function unverifiedLegacyClockCommand(Device $device): ?string
+    {
+        if (! $this->canUseLegacyTimeOnly($device)) {
+            return null;
+        }
+
+        $serial = trim((string) ($device->serial_number ?: $device->sn));
+        $key = 'adms:legacy-clock-only:'.hash('sha256', $serial);
+        $cooldown = max(60, (int) config('zkteco.legacy_time_only_interval_seconds', 300));
+
+        if (! Cache::store('file')->add($key, true, $cooldown)) {
+            return null;
+        }
+
+        // Unix seconds fits the device's 32-bit command ID until year 2038.
+        // This is an ID ONLY; DateTime uses ZKTeco's Appendix 5 encoding.
+        $commandId = (string) now()->timestamp;
+        Cache::store('file')->put($key.':reply-id', $commandId, $cooldown);
+
+        return 'C:'.$commandId.':SET OPTIONS DateTime='
+            .$this->systemClockService->encodeForPushCommand();
+    }
+
+    private function acceptTimeOnlyAcknowledgement(Device $device, array $context): bool
+    {
+        if (! $this->canUseLegacyTimeOnly($device)) {
+            return false;
+        }
+
+        $serial = trim((string) ($device->serial_number ?: $device->sn));
+        $key = 'adms:legacy-clock-only:'.hash('sha256', $serial).':reply-id';
+        $expected = (string) Cache::store('file')->get($key, '');
+        if ($expected === '') {
+            return false;
+        }
+
+        $records = $this->extractCommandReplyRecords($context);
+        foreach ($records as $record) {
+            $id = trim((string) ($record['ID'] ?? $record['CmdID'] ?? ''));
+            $command = strtoupper(trim((string) ($record['CMD'] ?? $record['Command'] ?? '')));
+            if ($id !== '' && hash_equals($expected, $id)
+                && in_array($command, ['SET OPTIONS', 'SET OPTION'], true)) {
+                Cache::store('file')->forget($key);
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function ensureAutomaticTimeSyncQueued(Device $device): void
