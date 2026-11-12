@@ -116,7 +116,7 @@ class LegacyDirectoryController extends Controller
                         $q->where($department, $filters['department']);
                     }
                     $rows = $q->orderBy($id ?: ($name ?: $columns[0]))
-                        ->simplePaginate(30)->withQueryString();
+                        ->paginate(20)->withQueryString();
                 } catch (\Throwable) {
                     $notice = 'This table is not readable with the existing restricted SQL login. Grant SELECT on that table only, if required.';
                 }
