@@ -31,7 +31,7 @@ cd /var/www/html
 php artisan config:clear
 php artisan adms:legacy-write-readiness --serial=CEG9223661162 --check-writer
 php artisan tinker --execute='
-$d=\\App\\Models\\Device::where("serial_number","CEG9223661162")->firstOrFail();
+$d=\App\Models\Device::where("serial_number","CEG9223661162")->firstOrFail();
 $codes=$d->attendanceLogs()->whereNotNull("employee_code")->distinct()->pluck("employee_code")->map(fn($x)=>trim((string)$x))->unique()->values();
 $known=DB::connection("legacy_sqlsrv")->table("dbo.Employee")->whereIn("BadgeNumber",$codes->all())->pluck("BadgeNumber")->map(fn($x)=>trim((string)$x))->unique();
 dump(["device"=>$d->name,"app_punch_count"=>$d->attendanceLogs()->count(),"known_original_badges"=>$known->all(),"missing_original_badges"=>$codes->diff($known)->values()->all()]);
@@ -48,7 +48,7 @@ php artisan tinker --execute='
 $sn="CEG9223661162";
 dump([
   "latest_source"=>DB::connection("legacy_sqlsrv")->table("dbo.Attendance")->where("DeviceSerialNumber",$sn)->orderByDesc("Id")->limit(5)->get(["Id","BadgeNumber","VerifyTime","Status","VerifyType","InsertDate"])->toArray(),
-  "latest_app"=>\\App\\Models\\AttendanceLog::whereHas("device",fn($q)=>$q->where("serial_number",$sn))->latest("id")->limit(3)->get(["employee_code","log_time","status"])->toArray(),
+  "latest_app"=>\App\Models\AttendanceLog::whereHas("device",fn($q)=>$q->where("serial_number",$sn))->latest("id")->limit(3)->get(["employee_code","log_time","status"])->toArray(),
 ]);
 '
 ```
