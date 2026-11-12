@@ -2,6 +2,15 @@
 
 use Illuminate\Support\Str;
 
+// Prevent accidental Laravel migrations/writes into the original historical
+// Att2000_V4 schema. Only the separate AttendanceCloud DB hosts app tables.
+$operationalDatabase = trim((string) env('ADMS_SQLSRV_DATABASE', ''));
+$historicalDatabase = trim((string) env('LEGACY_SQLSRV_DATABASE', 'Att2000_V4'));
+
+if ($operationalDatabase !== '' && strcasecmp($operationalDatabase, $historicalDatabase) === 0) {
+    throw new LogicException('Unsafe SQL Server configuration: operational ADMS database cannot be the original attendance database.');
+}
+
 return [
 
     /*
