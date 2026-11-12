@@ -9,9 +9,21 @@ $operationalDatabase = trim((string) env('ADMS_SQLSRV_DATABASE', ''));
 $historicalDatabase = trim((string) env('LEGACY_SQLSRV_DATABASE', ''));
 $appSchema = trim((string) env('ADMS_SQLSRV_SCHEMA', ''));
 
-if ($operationalDatabase === '' || $historicalDatabase === ''
-    || strcasecmp($operationalDatabase, $historicalDatabase) !== 0
-    || strcasecmp($appSchema, 'adms') !== 0) {
+// Composer triggers artisan package:discover while the Docker image is
+// being built (before Coolify injects secrets). Allow ONLY that harmless,
+// build-time command with no DB settings; never bypass checks for migrate,
+// HTTP requests, queue workers, tinker or real deployment commands.
+$composerDiscoverWithoutRuntime = PHP_SAPI === 'cli'
+    && ($_SERVER['argv'][1] ?? '') === 'package:discover'
+    && $operationalDatabase === ''
+    && $historicalDatabase === ''
+    && $appSchema === '';
+
+if (! $composerDiscoverWithoutRuntime
+    && ($operationalDatabase === '' || $historicalDatabase === ''
+        || strcasecmp($operationalDatabase, 'Att2000_V4') !== 0
+        || strcasecmp($operationalDatabase, $historicalDatabase) !== 0
+        || strcasecmp($appSchema, 'adms') !== 0)) {
     throw new LogicException('Unsafe ADMS config: require Att2000_V4 for both connections and ADMS_SQLSRV_SCHEMA=adms.');
 }
 
