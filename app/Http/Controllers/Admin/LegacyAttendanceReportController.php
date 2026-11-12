@@ -89,6 +89,7 @@ class LegacyAttendanceReportController extends Controller
         $departments = $db->table('dbo.Employee')
             ->select('DepartmentId')->whereNotNull('DepartmentId')
             ->distinct()->orderBy('DepartmentId')->pluck('DepartmentId');
+        $departmentNames = $this->departmentNames($db);
 
         return view('admin.legacy.report', [
             'report' => $report,
@@ -97,6 +98,34 @@ class LegacyAttendanceReportController extends Controller
             'employees' => $employees,
             'filters' => $filters,
             'departments' => $departments,
+            'departmentNames' => $departmentNames,
         ]);
+    }
+
+    private function departmentNames($db): array
+    {
+        try {
+            foreach (['Department', 'Departments'] as $table) {
+                $info = $db->select(
+                    "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+                     WHERE TABLE_SCHEMA = 'dbo' AND TABLE_NAME = ?", [$table]
+                );
+                $fields = array_map(static fn ($x): string => (string) $x->COLUMN_NAME, $info);
+                $id = collect(['Id', 'DepartmentId'])->first(
+                    fn ($c) => in_array(strtolower($c), array_map('strtolower', $fields), true)
+                );
+                $name = collect(['DepartmentName', 'NAME', 'Name'])->first(
+                    fn ($c) => in_array(strtolower($c), array_map('strtolower', $fields), true)
+                );
+                if ($id && $name) {
+                    return $db->table('dbo.'.$table)->get([$id, $name])
+                        ->mapWithKeys(static fn ($d) => [(string) $d->{$id} => (string) $d->{$name}])
+                        ->all();
+                }
+            }
+        } catch (\Throwable) {
+            return [];
+        }
+        return [];
     }
 }
