@@ -64,7 +64,7 @@ return new class extends Migration
 
         Schema::table('device_commands', function (Blueprint $table): void {
             if (! Schema::hasColumn('device_commands', 'device_sync_id')) {
-                $table->foreignId('device_sync_id')->nullable()->after('device_id')->constrained('device_syncs')->nullOnDelete();
+                $table->foreignId('device_sync_id')->nullable()->after('device_id')->constrained('device_syncs')->restrictOnDelete();
             }
 
             if (! Schema::hasColumn('device_commands', 'employee_id')) {
@@ -109,7 +109,7 @@ return new class extends Migration
         });
 
         DB::statement(
-            'CREATE UNIQUE INDEX [employees_sync_uid_unique] ON [dbo].[employees] ([sync_uid]) '
+            'CREATE UNIQUE INDEX [employees_sync_uid_unique] ON [adms].[employees] ([sync_uid]) '
             .'WHERE [sync_uid] IS NOT NULL'
         );
 
@@ -136,7 +136,7 @@ return new class extends Migration
             $table->dropIndex('device_commands_sync_status_index');
         });
 
-        DB::statement('DROP INDEX [employees_sync_uid_unique] ON [dbo].[employees]');
+        DB::statement('DROP INDEX [employees_sync_uid_unique] ON [adms].[employees]');
         Schema::table('employees', function (Blueprint $table): void {
             $table->dropIndex('employees_sync_enabled_status_index');
             $table->dropIndex('employees_sync_validated_index');
