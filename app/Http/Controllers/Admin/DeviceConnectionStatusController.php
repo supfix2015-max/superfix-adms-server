@@ -49,12 +49,34 @@ class DeviceConnectionStatusController extends Controller
             ])->all();
         });
 
-        $serials = array_values(array_unique(array_filter(array_column($source, 'serial'))));
-        $operational = $serials === [] ? collect() :
-            Device::query()->whereIn('serial_number', $serials)->orWhereIn('sn', $serials)
-                ->get(['id', 'serial_number', 'sn', 'status', 'last_seen', 'last_heartbeat']);
+        // Fetch application-side devices independently of the original roster.
+        // A lab terminal (such as BZD5261200843) may not exist in dbo.Device.
+        $operational = Device::query()->get([
+            'id', 'name', 'serial_number', 'sn', 'status', 'last_seen', 'last_heartbeat',
+        ]);
         $operationalBySerial = $operational->keyBy(static fn (Device $d): string =>
             trim((string) ($d->serial_number ?: $d->sn))
+        );
+
+        $historicSerials = array_fill_keys(array_filter(array_column($source, 'serial')), true);
+        $appOnly = $operational
+            ->filter(static fn (Device $d): bool =>
+                trim((string) ($d->serial_number ?: $d->sn)) !== ''
+                && ! isset($historicSerials[trim((string) ($d->serial_number ?: $d->sn))])
+            )
+            ->map(static fn (Device $d): array => [
+                'name' => $d->name ?: 'ADMS-registered device',
+                'serial' => trim((string) ($d->serial_number ?: $d->sn)),
+                'legacy_ip' => null,
+                'legacy_status' => null,
+                'legacy_punch' => null,
+                'source' => 'app',
+            ])
+            ->values()->all();
+
+        $source = array_merge(
+            array_map(static fn (array $d): array => $d + ['source' => 'historical'], $source),
+            $appOnly
         );
 
         $timeZone = (string) (config('legacy_attendance.attendance_wallclock_timezone') ?: 'Asia/Dubai');
@@ -76,10 +98,13 @@ class DeviceConnectionStatusController extends Controller
         }, $source);
 
         $onlineCount = count(array_filter($rows, static fn (array $r): bool => $r['online']));
+        $historicalCount = count($rows) - count($appOnly);
         return view('admin.device_connections.index', [
             'rows' => $rows,
             'onlineCount' => $onlineCount,
-            'historicalCount' => count($rows),
+            'historicalCount' => $historicalCount,
+            'appOnlyCount' => count($appOnly),
+            'totalCount' => count($rows),
             'timeZone' => $timeZone,
             'ttl' => $ttl,
         ]);
