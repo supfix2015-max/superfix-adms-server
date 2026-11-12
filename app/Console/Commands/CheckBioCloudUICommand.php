@@ -26,11 +26,24 @@ class CheckBioCloudUICommand extends Command
             $fail = $fail || ! $correct;
 
             $license = $db->selectOne(
-                "SELECT COL_LENGTH(N'adms.devices', N'requires_license') AS field_length"
+                "SELECT
+                    OBJECT_ID(N'adms.devices', N'U') AS table_id,
+                    COL_LENGTH(N'adms.devices', N'requires_license') AS field_length,
+                    HAS_PERMS_BY_NAME(N'adms.devices', N'OBJECT', N'ALTER') AS can_alter"
             );
-            $ready = $license !== null && $license->field_length !== null;
-            $results[] = ['Edit License checkbox column', $ready ? 'OK · adms.devices' : 'MIGRATION REQUIRED'];
-            $fail = $fail || ! $ready;
+            $visible = $license !== null && $license->table_id !== null;
+            $ready = $visible && $license->field_length !== null;
+            $results[] = ['Exact operational devices table', $visible
+                ? 'OK · Att2000_V4.adms.devices' : 'BLOCKER · adms.devices not visible'];
+            $results[] = ['Edit License checkbox column', $ready
+                ? 'OK · adms.devices' : 'MIGRATION REQUIRED'];
+            if (! $ready) {
+                $results[] = ['ALTER permission on adms.devices',
+                    $visible && (int) ($license->can_alter ?? 0) === 1
+                        ? 'YES · rerun corrected schema-qualified migration'
+                        : 'NO · DBA apply docs/sql/adms-devices-requires-license.sql'];
+            }
+            $fail = $fail || ! $ready || ! $visible;
         } catch (\Throwable $e) {
             $results[] = ['Application SQL connection', 'FAILED: '.$e->getMessage()];
             $fail = true;
