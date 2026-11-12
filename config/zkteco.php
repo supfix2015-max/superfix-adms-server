@@ -65,12 +65,19 @@ return [
     // even when a legacy terminal is temporarily allowed to upload attendance
     // by historical serial alone (HTTP is unencrypted).
     'command_require_token' => filter_var(env('ZKTECO_COMMAND_REQUIRE_TOKEN', true), FILTER_VALIDATE_BOOLEAN),
+    // Automatic SET OPTION TimeZone / DateTime requires authenticated
+    // /iclock/getrequest polls; never available for serial-only HTTP clients.
+    'auto_time_sync_enabled' => filter_var(env('ZKTECO_AUTO_TIME_SYNC_ENABLED', false), FILTER_VALIDATE_BOOLEAN),
+    'auto_time_sync_interval_hours' => max(1, (int) env('ZKTECO_AUTO_TIME_SYNC_INTERVAL_HOURS', 24)),
     'auto_pull_employees_on_contact' => env('ZKTECO_AUTO_PULL_EMPLOYEES_ON_CONTACT', false),
     'auto_pull_employees_cooldown_minutes' => (int) env('ZKTECO_AUTO_PULL_EMPLOYEES_COOLDOWN_MINUTES', 15),
     'auto_cleanup_legacy_users' => env('ZKTECO_AUTO_CLEANUP_LEGACY_USERS', false),
     'system_timezone' => env('ZKTECO_SYSTEM_TIMEZONE'),
     'device_timezone' => env('ZKTECO_DEVICE_TIMEZONE', env('APP_TIMEZONE', 'UTC')),
     'option_timezone' => env('ZKTECO_OPTION_TIMEZONE'),
+    // Some ZKTeco PUSH firmwares honor SyncTime during options handshake;
+    // set to 3600 for hourly clock sync only after testing device firmware.
+    'option_sync_time_seconds' => max(0, (int) env('ZKTECO_OPTION_SYNC_TIME_SECONDS', 0)),
     'option_stamp' => (string) env('ZKTECO_OPTION_STAMP', '9999'),
     'option_op_stamp' => (string) env('ZKTECO_OPTION_OPSTAMP', '9999'),
     'option_error_delay' => (string) env('ZKTECO_OPTION_ERROR_DELAY', '60'),
