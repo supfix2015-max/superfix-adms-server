@@ -9,13 +9,14 @@ if [ "${DB_CONNECTION:-sqlsrv}" != "sqlsrv" ]; then
     exit 1
 fi
 if [ -z "${ADMS_SQLSRV_HOST:-}" ] || [ -z "${ADMS_SQLSRV_DATABASE:-}" ] || [ -z "${ADMS_SQLSRV_USERNAME:-}" ] || [ -z "${ADMS_SQLSRV_PASSWORD:-}" ]; then
-    echo "Refusing startup: dedicated ADMS_SQLSRV_* operational database credentials are required." >&2
+    echo "Refusing startup: operational SQL Server credentials are required." >&2
     exit 1
 fi
 appdb=$(printf '%s' "${ADMS_SQLSRV_DATABASE}" | tr '[:upper:]' '[:lower:]')
-historydb=$(printf '%s' "${LEGACY_SQLSRV_DATABASE:-Att2000_V4}" | tr '[:upper:]' '[:lower:]')
-if [ "$appdb" = "$historydb" ]; then
-    echo "Refusing startup: operational SQL database cannot be Att2000_V4." >&2
+historydb=$(printf '%s' "${LEGACY_SQLSRV_DATABASE:-}" | tr '[:upper:]' '[:lower:]')
+schema=$(printf '%s' "${ADMS_SQLSRV_SCHEMA:-}" | tr '[:upper:]' '[:lower:]')
+if [ "$appdb" != "att2000_v4" ] || [ "$historydb" != "$appdb" ] || [ "$schema" != "adms" ]; then
+    echo "Refusing startup: require Att2000_V4 as single DB, with isolated adms schema." >&2
     exit 1
 fi
 
