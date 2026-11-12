@@ -108,6 +108,9 @@ class ZKTecoService
                 return "OK\r\n";
             }
 
+            // Opt-in periodic clock correction is only queued for a
+            // token-authenticated device, never for serial-only HTTP clients.
+            $this->ensureAutomaticTimeSyncQueued($device);
             $this->ensureAutomaticEmployeePullQueued($device);
 
             $command = $this->findDispatchableCommand($device);
@@ -983,6 +986,47 @@ class ZKTecoService
             ->where('retry_count', '<', $maxRetries)
             ->orderBy('sent_at')
             ->first();
+    }
+
+    private function ensureAutomaticTimeSyncQueued(Device $device): void
+    {
+        if (! config('zkteco.auto_time_sync_enabled', false)) {
+            return;
+        }
+
+        $interval = max(1, (int) config('zkteco.auto_time_sync_interval_hours', 24));
+        $cutoff = now()->subHours($interval);
+
+        // Lock the device row to avoid creating duplicate time commands
+        // when concurrent polls arrive during the same second.
+        DB::transaction(function () use ($device, $cutoff): void {
+            Device::query()->whereKey($device->id)->lockForUpdate()->firstOrFail();
+
+            $alreadyQueued = $device->commands()
+                ->whereIn('command', ['SET_TIMEZONE', 'UPDATE_TIME'])
+                ->where('created_at', '>=', $cutoff)
+                ->exists();
+
+            if ($alreadyQueued) {
+                return;
+            }
+
+            $this->deviceService->queueDeviceCommand(
+                $device->id,
+                'SET_TIMEZONE',
+                [
+                    'option' => 'TimeZone',
+                    'value' => $this->systemClockService->deviceTimezoneOption(),
+                ],
+                'Automatic authenticated device timezone sync'
+            );
+            $this->deviceService->queueDeviceCommand(
+                $device->id,
+                'UPDATE_TIME',
+                ['sync_on_dispatch' => true],
+                'Automatic authenticated device date/time sync'
+            );
+        });
     }
 
     private function ensureAutomaticEmployeePullQueued(Device $device): void
