@@ -754,7 +754,16 @@ class ZKTecoService
         // Under explicit cutover, write first to the ORIGINAL SQL Server DB.
         // If that fails, return an error (not OK) to the device; a retry will
         // check and avoid duplicating the original SQL Server punch.
-        if (config('legacy_attendance.attendance_write_enabled', false) && ! $stagingBackfill) {
+        // IMPORTANT: global cutover enabled does not mean every terminal
+        // may INSERT into original dbo.Attendance. Non-approved serials are
+        // accepted only into isolated adms.attendance_logs and ACKed after
+        // successful staging. This avoids an endless 500/retry loop that was
+        // observed for a terminal outside the Hili writer allowlist.
+        $legacyWriter = app(LegacyAttendanceWriter::class);
+        $eligibleOriginalWriter = ! $stagingBackfill
+            && $legacyWriter->canWriteFor($device);
+
+        if ($eligibleOriginalWriter) {
             $sourceRecords = $preparedRecords;
             // Hili's clock was four hours slow before the 2026-11-12
             // correction. Preserve pre-correction device history in adms
@@ -773,7 +782,7 @@ class ZKTecoService
             }
 
             if ($sourceRecords->isNotEmpty()) {
-                app(LegacyAttendanceWriter::class)->persist($device, $sourceRecords);
+                $legacyWriter->persist($device, $sourceRecords);
             }
         }
 
