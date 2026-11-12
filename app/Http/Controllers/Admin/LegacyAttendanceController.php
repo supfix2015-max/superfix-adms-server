@@ -158,10 +158,21 @@ class LegacyAttendanceController extends Controller
      */
     private function attendanceQuery(array $filters, string $search): Builder
     {
-        $query = DB::connection('legacy_sqlsrv')
-            ->table('dbo.Attendance as a')
-            ->leftJoin('dbo.Employee as e', 'e.BadgeNumber', '=', 'a.BadgeNumber')
-            ->leftJoin('dbo.Device as d', 'd.DeviceSerialNumber', '=', 'a.DeviceSerialNumber')
+        $source = DB::connection('legacy_sqlsrv');
+        // Canonicalize keys BEFORE joining: duplicate legacy registrations
+        // must never multiply attendance rows or break pagination/export.
+        $employeeKeys = $source->table('dbo.Employee')
+            ->select('BadgeNumber')->selectRaw('MIN(Id) as CanonicalId')
+            ->groupBy('BadgeNumber');
+        $deviceKeys = $source->table('dbo.Device')
+            ->select('DeviceSerialNumber')->selectRaw('MIN(Id) as CanonicalId')
+            ->groupBy('DeviceSerialNumber');
+
+        $query = $source->table('dbo.Attendance as a')
+            ->leftJoinSub($employeeKeys, 'em', 'em.BadgeNumber', '=', 'a.BadgeNumber')
+            ->leftJoin('dbo.Employee as e', 'e.Id', '=', 'em.CanonicalId')
+            ->leftJoinSub($deviceKeys, 'dm', 'dm.DeviceSerialNumber', '=', 'a.DeviceSerialNumber')
+            ->leftJoin('dbo.Device as d', 'd.Id', '=', 'dm.CanonicalId')
             ->select([
                 'a.Id', 'a.BadgeNumber', 'a.VerifyTime', 'a.Status', 'a.VerifyType',
                 'a.DeviceSerialNumber', 'a.Remark', 'e.NAME as EmployeeName',
@@ -213,10 +224,16 @@ class LegacyAttendanceController extends Controller
     private function departmentNames(): array
     {
         $source = DB::connection('legacy_sqlsrv');
-        $metadata = $source->select(
-            "SELECT TABLE_NAME, COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
-             WHERE TABLE_SCHEMA = 'dbo' AND TABLE_NAME IN ('Department', 'Departments')"
-        );
+        try {
+            $metadata = $source->select(
+                "SELECT TABLE_NAME, COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+                 WHERE TABLE_SCHEMA = 'dbo' AND TABLE_NAME IN ('Department', 'Departments')"
+            );
+        } catch (\Throwable) {
+            // Some SQL reader accounts were originally granted SELECT only
+            // on Employee/Attendance/Device/EmployeeTemplate.
+            return [];
+        }
         foreach (['Department', 'Departments'] as $table) {
             $names = [];
             foreach ($metadata as $col) {
@@ -231,10 +248,14 @@ class LegacyAttendanceController extends Controller
                 fn ($v) => in_array(strtolower($v), array_map('strtolower', $names), true)
             );
             if ($idCol && $nameCol) {
-                return $source->table('dbo.'.$table)->select([$idCol, $nameCol])
-                    ->get()->mapWithKeys(static fn ($d) => [
-                        (string) $d->{$idCol} => (string) $d->{$nameCol}
-                    ])->all();
+                try {
+                    return $source->table('dbo.'.$table)->select([$idCol, $nameCol])
+                        ->get()->mapWithKeys(static fn ($d) => [
+                            (string) $d->{$idCol} => (string) $d->{$nameCol}
+                        ])->all();
+                } catch (\Throwable) {
+                    return [];
+                }
             }
         }
         return [];
