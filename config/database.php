@@ -2,13 +2,17 @@
 
 use Illuminate\Support\Str;
 
-// Prevent accidental Laravel migrations/writes into the original historical
-// Att2000_V4 schema. Only the separate AttendanceCloud DB hosts app tables.
+// Single-database mode: the historical records live under dbo.* while all
+// Laravel-owned tables live under adms.* in the SAME Att2000_V4 database.
+// SQL Server login DEFAULT_SCHEMA must be adms; see preflight command.
 $operationalDatabase = trim((string) env('ADMS_SQLSRV_DATABASE', ''));
-$historicalDatabase = trim((string) env('LEGACY_SQLSRV_DATABASE', 'Att2000_V4'));
+$historicalDatabase = trim((string) env('LEGACY_SQLSRV_DATABASE', ''));
+$appSchema = trim((string) env('ADMS_SQLSRV_SCHEMA', ''));
 
-if ($operationalDatabase !== '' && strcasecmp($operationalDatabase, $historicalDatabase) === 0) {
-    throw new LogicException('Unsafe SQL Server configuration: operational ADMS database cannot be the original attendance database.');
+if ($operationalDatabase === '' || $historicalDatabase === ''
+    || strcasecmp($operationalDatabase, $historicalDatabase) !== 0
+    || strcasecmp($appSchema, 'adms') !== 0) {
+    throw new LogicException('Unsafe ADMS config: require Att2000_V4 for both connections and ADMS_SQLSRV_SCHEMA=adms.');
 }
 
 return [
@@ -100,11 +104,13 @@ return [
 
         'sqlsrv' => [
             'driver' => 'sqlsrv',
-            // Dedicated, separately permissioned Laravel database. Never point
-            // these models or migrations at original Att2000_V4.
+            // Same database as original historical records, but the limited
+            // SQL Server login MUST default to its isolated adms schema.
+            // Do not grant this login rights to historical dbo tables.
             'host' => env('ADMS_SQLSRV_HOST', ''),
             'port' => env('ADMS_SQLSRV_PORT', '1433'),
             'database' => env('ADMS_SQLSRV_DATABASE', ''),
+            'schema' => env('ADMS_SQLSRV_SCHEMA', 'adms'),
             'username' => env('ADMS_SQLSRV_USERNAME', ''),
             'password' => env('ADMS_SQLSRV_PASSWORD', ''),
             'charset' => 'utf8',
