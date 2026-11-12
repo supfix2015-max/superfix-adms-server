@@ -25,26 +25,10 @@ class LegacyAttendanceWriter
             return 0;
         }
 
-        $serial = trim((string) $device->serial_number);
-        $allowedSerials = config('legacy_attendance.attendance_write_serials', []);
-
-        $explicitlyAllowed = $serial !== '' && in_array($serial, $allowedSerials, true);
-
-        // Future rollout: only already registered original terminals can be
-        // enabled by the opt-in fleet switch. The office test UA300 is NOT
-        // historical, so it is not included in this mode.
-        $historicallyAllowed = false;
-        if (! $explicitlyAllowed && $serial !== ''
-            && config('legacy_attendance.attendance_write_all_registered', false)
-            && preg_match('/^[A-Za-z0-9._:-]{1,64}$/', $serial)) {
-            $historicallyAllowed = DB::connection('legacy_sqlsrv')
-                ->table('dbo.Device')
-                ->where('DeviceSerialNumber', $serial)
-                ->exists();
-        }
-
-        if (! $explicitlyAllowed && ! $historicallyAllowed) {
-            // Never ACK a terminal that was mistakenly cut over without SQL write support.
+        if (! $this->canWriteFor($device)) {
+            // This method is reserved for approved original SQL writers.
+            // The receiver checks canWriteFor() first and stages unapproved
+            // terminals in adms instead of returning retry-inducing HTTP 500.
             throw new RuntimeException('Device is not allowed for original SQL Server attendance writes.');
         }
 
@@ -150,6 +134,39 @@ class LegacyAttendanceWriter
         }
 
         return $inserted;
+    }
+
+
+    /**
+     * Read-only device gate for the ingestion path.
+     * Original SQL writes are limited to explicitly approved serial numbers
+     * or (only with a separate opt-in) exact legacy-registered serials.
+     *
+     * Non-approved terminals are still permitted to stage their accepted
+     * ATTLOG records in adms; they must not be sent to dbo.Attendance.
+     */
+    public function canWriteFor(Device $device): bool
+    {
+        if (! config('legacy_attendance.attendance_write_enabled', false)) {
+            return false;
+        }
+
+        $serial = trim((string) $device->serial_number);
+        $allowedSerials = config('legacy_attendance.attendance_write_serials', []);
+        if ($serial !== '' && in_array($serial, $allowedSerials, true)) {
+            return true;
+        }
+
+        if ($serial === ''
+            || ! config('legacy_attendance.attendance_write_all_registered', false)
+            || ! preg_match('/^[A-Za-z0-9._:-]{1,64}$/', $serial)) {
+            return false;
+        }
+
+        return DB::connection('legacy_sqlsrv')
+            ->table('dbo.Device')
+            ->where('DeviceSerialNumber', $serial)
+            ->exists();
     }
 
     private function assertSchemaCompatible($db): void
