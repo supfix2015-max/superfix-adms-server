@@ -20,7 +20,7 @@
             <option value="">All departments</option>
             @foreach ($departments as $department)
                 <option value="{{ $department }}" @selected((string) ($filters['department'] ?? '') === (string) $department)>
-                    Department {{ $department }}
+                    {{ $departmentNames[(string) $department] ?? 'Department '.$department }}
                 </option>
             @endforeach
         </select>
@@ -41,7 +41,7 @@
                 <tr>
                     <th>Employee ID</th>
                     <th>Name</th>
-                    <th>Department ID</th>
+                    <th>Department Name</th>
                     <th>{{ $report === 'monthly' ? 'Month' : ($report === 'summary' ? 'Range' : 'Date') }}</th>
                     <th>{{ $report === 'first-in-last-out' ? 'First Check-In' : 'First Punch' }}</th>
                     <th>{{ $report === 'first-in-last-out' ? 'Last Check-Out' : 'Last Punch' }}</th>
@@ -56,7 +56,7 @@
                     <tr>
                         <td class="fw-semibold">{{ $row->BadgeNumber }}</td>
                         <td>{{ $emp?->NAME ?: 'Unknown employee' }}</td>
-                        <td>{{ $emp?->DepartmentId ?? '—' }}</td>
+                        <td>{{ $departmentNames[(string) ($emp?->DepartmentId ?? '')] ?? ($emp?->DepartmentId ?? '—') }}</td>
                         <td>{{ $row->WorkPeriod }}</td>
                         @php($first = $report === 'first-in-last-out' ? $row->FirstIn : $row->FirstPunch)
                         @php($last = $report === 'first-in-last-out' ? $row->LastOut : $row->LastPunch)
