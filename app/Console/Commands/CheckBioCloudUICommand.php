@@ -90,9 +90,9 @@ class CheckBioCloudUICommand extends Command
             try {
                 // Invoke the actual controller, not a hardcoded route string.
                 // This is SELECT-only and never sends commands or changes rows.
-                $view = app(\App\\Http\\Controllers\\Admin\\DeviceController::class)
-                    ->index(\Illuminate\\Http\\Request::create('/admin/devices', 'GET'));
-                $joinedFleet = $view instanceof \Illuminate\\Contracts\\View\\View
+                $view = app(\App\Http\Controllers\Admin\DeviceController::class)
+                    ->index(\Illuminate\Http\Request::create('/admin/devices', 'GET'));
+                $joinedFleet = $view instanceof \Illuminate\Contracts\View\View
                     && $view->name() === 'admin.legacy.fleet';
                 $results[] = ['Actual /admin/devices controller view', $joinedFleet
                     ? 'OK · combined original + live device fleet' : 'BLOCKER · stale device listing'];
