@@ -692,11 +692,14 @@ class ZKTecoService
                 ->values();
 
             if ($employeeRows->isNotEmpty()) {
-                Employee::query()->upsert(
-                    $employeeRows->all(),
-                    ['employee_id'],
-                    ['device_id', 'uid', 'sync_uid', 'card_no', 'name', 'sync_name', 'status', 'raw_payload', 'updated_at']
-                );
+                // Keep each MERGE below SQL Server's 2,100-parameter ceiling.
+                foreach ($employeeRows->chunk(50) as $batch) {
+                    Employee::query()->upsert(
+                        $batch->all(),
+                        ['employee_id'],
+                        ['device_id', 'uid', 'sync_uid', 'card_no', 'name', 'sync_name', 'status', 'raw_payload', 'updated_at']
+                    );
+                }
             }
 
             $employeeMap = Employee::query()
@@ -743,7 +746,11 @@ class ZKTecoService
                 // duplicate-protection guard across concurrent requests.
                 // On an actual insert error the transaction rolls back
                 // and the device will safely retry the batch.
-                DB::table('attendance_logs')->insert($rows->all());
+                // 50 rows * ~16 columns stays well within SQL Server's
+                // 2,100 bound-parameter ceiling for large device uploads.
+                foreach ($rows->chunk(50) as $batch) {
+                    DB::table('attendance_logs')->insert($batch->all());
+                }
                 $newHashes = $rows->pluck('payload_hash')->all();
             }
         });
