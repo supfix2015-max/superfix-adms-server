@@ -126,3 +126,21 @@ php artisan adms:legacy-write-readiness --serial=BZD5261200843 --check-writer
 Only a writer with SELECT+INSERT on `dbo.Attendance`, without UPDATE/DELETE or template access, is accepted. This checks permissions but does not actually INSERT. A separate write pilot, inspected on both original SQL Server and MySQL, must be tested with an actual UA300 punch before any wider rollout.
 
 The pilot writer additionally checks every incoming employee `BadgeNumber` against original `dbo.Employee` using the existing read-only SQL connection **before** any write. A UA300 test user with a staging-only badge is rejected instead of creating an orphan punch; use a verified original `Employee.BadgeNumber` for an actual test punch. This does not create or modify employees.
+
+## New original SQL Server dashboard (2026-11-12)
+
+On deployments with `LEGACY_SQLSRV_BROWSER_ENABLED=true`, `GET /admin/dashboard` now uses `LegacyDashboardService` and `resources/views/admin/dashboard_sql.blade.php`. All displayed counters, recent punches, terminal history and seven-day activity are read directly from `Att2000_V4` over the SELECT-only `legacy_sqlsrv` connection. No sample/converted MySQL employee or punch numbers are used.
+
+- All-time employee, attendance, device and biometric template metadata counts.
+- Latest `Attendance.VerifyTime`, explicit staleness warning when older than 24 hours. No claim of live monitoring from historical rows.
+- Latest stored calendar-day counts, check-in/check-out and distinct badge totals.
+- Activity trend for 7 calendar days ending at the latest observed punch timestamp (not necessarily the current week).
+- Recent source attendance rows and registered historical devices, with links to read-only filtered browser tabs.
+- Cached using **file cache** for 300 seconds; it does not use MySQL for cache.
+- Staging sidebar primary Employee, Device, Attendance and template links navigate directly to corresponding original SQL Server tabs. Pilot Commands and Pilot Logs remain separate and **not** part of the original SQL Server. Laravel sign-in and those pilot device-operation routes still depend on the existing MySQL app database until the application-data migration phase.
+
+Security: No original SQL Server schema changes, source writes, biometric payload reads or device commands occur on dashboard requests. This is the start of staged interface modernization, **not** an approval to delete MySQL or move devices. Keep all previous device pilot flags disabled.
+
+After redeploying the test branch, check `/admin/dashboard`. Expected verified totals for current snapshot: 334 original employees, 584196 historical punches, 22 registered terminals and 771 template metadata rows (may change if original source receives newer records). The latest recorded punch timestamp is shown so the user can tell whether the database copy is current.
+
+The project's development test suite contains `LegacyDashboardTest`. Production Docker Composer `--no-dev` intentionally lacks PHPUnit; do not try to run the feature suite inside that image.
