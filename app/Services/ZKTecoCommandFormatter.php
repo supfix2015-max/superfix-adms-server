@@ -41,16 +41,14 @@ class ZKTecoCommandFormatter
         $parameters = $command->parameters ?? [];
 
         if (! empty($parameters['option']) && array_key_exists('value', $parameters)) {
-            return "C:{$command->id}:SET OPTION {$parameters['option']}={$parameters['value']}";
+            return "C:{$command->id}:SET OPTIONS {$parameters['option']}={$parameters['value']}";
         }
 
-        // Scheduled automatic sync must use the server clock at actual
-        // transmission time, not the time a command was queued yesterday.
-        $timestamp = ! empty($parameters['sync_on_dispatch'])
-            ? $this->systemClockService->formatForDevice()
-            : $this->systemClockService->normalizeForDevice($parameters['timestamp'] ?? null);
-
-        return "C:{$command->id}:SET OPTION DateTime={$timestamp}";
+        // PUSH SDK Appendix 5: DateTime is OldEncodeTime (a decimal
+        // number), not human-readable YYYY-MM-DD HH:MM:SS or Unix epoch.
+        // Always calculate at dispatch to avoid stale clock commands.
+        return "C:{$command->id}:SET OPTIONS DateTime="
+            .$this->systemClockService->encodeForPushCommand();
     }
 
     private function formatOptionCommand(DeviceCommand $command): string
@@ -59,7 +57,7 @@ class ZKTecoCommandFormatter
         $option = $this->sanitize((string) ($parameters['option'] ?? 'Realtime'));
         $value = $this->sanitize((string) ($parameters['value'] ?? '1'));
 
-        return "C:{$command->id}:SET OPTION {$option}={$value}";
+        return "C:{$command->id}:SET OPTIONS {$option}={$value}";
     }
 
     private function formatUserCommand(DeviceCommand $command): string
