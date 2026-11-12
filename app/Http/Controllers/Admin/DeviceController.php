@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\Device;
 use App\Models\Employee;
+use App\Http\Controllers\Admin\LegacyFleetController;
 use App\Repositories\DeviceRepository;
 use App\Services\DeviceService;
 use Illuminate\Http\Request;
@@ -18,6 +19,13 @@ class DeviceController extends Controller
 
     public function index(Request $request)
     {
+        // Present the combined original-SQL + operational fleet at the
+        // established /admin/devices URL. Previously the new fleet view
+        // was hidden at /admin/fleet while /admin/devices stayed obsolete.
+        if (config('legacy_attendance.browser_enabled', false)) {
+            return app(LegacyFleetController::class)->index($request);
+        }
+
         $filters = [
             'search' => $request->input('search'),
             'status' => $request->input('status'),
