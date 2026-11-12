@@ -1,4 +1,4 @@
-@extends('admin.layout')
+@extends(config('legacy_attendance.browser_enabled', false) ? 'admin.layout_biocloud' : 'admin.layout')
 
 @section('title', 'Edit Device')
 @section('page_title', 'Edit Device Profile')
@@ -49,14 +49,32 @@
                             <div class="row g-3">
                                 <div class="col-md-8">
                                     <label for="ip_address" class="form-label fw-semibold">IP Address</label>
-                                    <input id="ip_address" type="text" class="form-control @error('ip_address') is-invalid @enderror" name="ip_address" value="{{ old('ip_address', $device->ip_address) }}" required>
+                                    <input id="ip_address" type="text" class="form-control @error('ip_address') is-invalid @enderror" name="ip_address" value="{{ old('ip_address', $device->ip_address) }}">
                                     @error('ip_address')<div class="invalid-feedback">{{ $message }}</div>@enderror
                                 </div>
                                 <div class="col-md-4">
                                     <label for="port" class="form-label fw-semibold">Port</label>
-                                    <input id="port" type="number" class="form-control @error('port') is-invalid @enderror" name="port" value="{{ old('port', $device->port) }}" min="1" max="65535" required>
+                                    <input id="port" type="number" class="form-control @error('port') is-invalid @enderror" name="port" value="{{ old('port', $device->port) }}" min="1" max="65535">
                                     @error('port')<div class="invalid-feedback">{{ $message }}</div>@enderror
                                 </div>
+                            </div>
+                        </div>
+
+                        <div class="border rounded p-3 bg-light">
+                            <h6 class="mb-2">Edit License requirement</h6>
+                            <input type="hidden" name="requires_license" value="0">
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" role="switch"
+                                    name="requires_license" id="requires_license" value="1"
+                                    @checked(old('requires_license', $device->requires_license))>
+                                <label class="form-check-label" for="requires_license">
+                                    <strong>This device requires Edit License</strong>
+                                </label>
+                            </div>
+                            <div class="form-text">
+                                Leave unchecked when the terminal does not require a vendor license.
+                                This setting is saved to the operational device inventory only.
+                                It does not upload or activate a license on the physical terminal.
                             </div>
                         </div>
 
