@@ -26,15 +26,15 @@
             ['route' => route('admin.directory.index', ['section' => 'temporary-schedule']), 'match' => 'admin.directory.*', 'section' => 'temporary-schedule', 'icon' => 'bi-calendar-plus', 'label' => 'Temporary Schedules'],
             ['route' => route('admin.directory.index', ['section' => 'employee-leave']), 'match' => 'admin.directory.*', 'section' => 'employee-leave', 'icon' => 'bi-person-dash', 'label' => 'Employee Leave'],
             ['route' => route('admin.employees.index'), 'match' => 'admin.employees.*', 'icon' => 'bi-person-gear', 'label' => 'ADMS Employees'],
-            ['route' => route('admin.credentials.index'), 'match' => 'admin.credentials.*', 'icon' => 'bi-person-vcard', 'label' => 'Credentials & Enrolment'],
+            ['route' => route('admin.credentials.index'), 'match' => 'admin.credentials.index', 'icon' => 'bi-person-vcard', 'label' => 'Credentials & Enrolment'],
             ['route' => route('admin.credentials.no-credential'), 'match' => 'admin.credentials.no-credential', 'icon' => 'bi-person-exclamation', 'label' => 'Missing Credentials'],
         ],
         'Devices & Commands' => [
-            ['route' => route('admin.devices.index'), 'match' => 'admin.devices.*', 'icon' => 'bi-hdd-network', 'label' => 'Device Fleet & Licenses'],
+            ['route' => route('admin.devices.index'), 'match' => 'admin.devices.index', 'icon' => 'bi-hdd-network', 'label' => 'Device Fleet & Licenses'],
             ['route' => route('admin.device-connectivity.index'), 'match' => 'admin.device-connectivity.*', 'icon' => 'bi-broadcast-pin', 'label' => 'Device Connectivity'],
             ['route' => route('admin.legacy.index', ['tab' => 'devices']), 'match' => 'admin.legacy.index', 'tab' => 'devices', 'icon' => 'bi-database', 'label' => 'Original Device Registry'],
             ['route' => route('admin.devices.create'), 'match' => 'admin.devices.create', 'icon' => 'bi-plus-square', 'label' => 'Register Device'],
-            ['route' => route('admin.commands.index'), 'match' => 'admin.commands.*', 'icon' => 'bi-terminal', 'label' => 'Device Commands'],
+            ['route' => route('admin.commands.index'), 'match' => 'admin.commands.index', 'icon' => 'bi-terminal', 'label' => 'Device Commands'],
             ['route' => route('admin.commands.create'), 'match' => 'admin.commands.create', 'icon' => 'bi-send', 'label' => 'New Device Command'],
         ],
         'Attendance & Reports' => [
