@@ -8,6 +8,20 @@ use Tests\TestCase;
 
 class ZktecoServerTimeTest extends TestCase
 {
+    public function test_official_old_encode_time_fixture_and_realtime_response(): void
+    {
+        config()->set('zkteco.system_timezone', 'Asia/Dubai');
+
+        CarbonImmutable::setTestNow(CarbonImmutable::parse('2018-02-22 10:54:54', 'UTC'));
+        try {
+            $clock = app(SystemClockService::class);
+            $this->assertSame(583080894, $clock->encodeForPushCommand());
+            $this->assertSame('DateTime=583080894,ServerTZ=+0400', $clock->formatForRealtimeTimeResponse());
+        } finally {
+            CarbonImmutable::setTestNow();
+        }
+    }
+
     public function test_push_time_response_contains_dubai_clock_and_explicit_offset(): void
     {
         config()->set('zkteco.system_timezone', 'Asia/Dubai');
