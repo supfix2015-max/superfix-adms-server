@@ -134,6 +134,18 @@ class CheckBioCloudUICommand extends Command
             $fail = $fail || ! $consistent;
         }
 
+        // Fail the preflight if the sidebar regresses to a flat collection
+        // or fails to keep commands inside their relevant collapsible group.
+        $layout = base_path('resources/views/admin/layout.blade.php');
+        $markup = is_file($layout) ? (string) file_get_contents($layout) : '';
+        $accordionReady = str_contains($markup, 'class="sidebar-group"')
+            && str_contains($markup, 'class="sidebar-subgroup"')
+            && str_contains($markup, 'sidebar-subgroup-contents')
+            && str_contains($markup, 'aria-current="page"');
+        $results[] = ['Enterprise sidebar navigation', $accordionReady
+            ? 'OK · collapsible categories + nested actions' : 'BLOCKER · missing nested accordion'];
+        $fail = $fail || ! $accordionReady;
+
         $results[] = ['Command dispatch', config('zkteco.dispatch_commands', false)
             ? 'ENABLED · validate device token delivery before fleet rollout'
             : 'LOCKED · safe before fleet onboarding'];
