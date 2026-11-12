@@ -16,7 +16,8 @@ class ZktecoServerTimeTest extends TestCase
         try {
             $clock = app(SystemClockService::class);
             $this->assertSame(583080894, $clock->encodeForPushCommand());
-            $this->assertSame('DateTime=583080894,ServerTZ=+0400', $clock->formatForRealtimeTimeResponse());
+            // Device command uses local UAE time, rtdata callback encodes UTC plus ServerTZ.
+            $this->assertSame('DateTime=583066494,ServerTZ=+0400', $clock->formatForRealtimeTimeResponse());
         } finally {
             CarbonImmutable::setTestNow();
         }
