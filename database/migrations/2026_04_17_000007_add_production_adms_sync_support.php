@@ -62,13 +62,19 @@ return new class extends Migration
             }
         });
 
+        // SQL Server requires NO ACTION here: RESTRICT is invalid SQL
+        // Server syntax, and SET NULL creates multiple cascade paths via
+        // devices -> device_syncs -> device_commands.
+        // Create nullable columns separately from foreign keys so a failed
+        // earlier migration can resume without losing its partially added
+        // columns or silently skipping the missing constraints.
         Schema::table('device_commands', function (Blueprint $table): void {
             if (! Schema::hasColumn('device_commands', 'device_sync_id')) {
-                $table->foreignId('device_sync_id')->nullable()->after('device_id')->constrained('device_syncs')->restrictOnDelete();
+                $table->foreignId('device_sync_id')->nullable()->after('device_id');
             }
 
             if (! Schema::hasColumn('device_commands', 'employee_id')) {
-                $table->foreignId('employee_id')->nullable()->after('device_sync_id')->constrained('employees')->nullOnDelete();
+                $table->foreignId('employee_id')->nullable()->after('device_sync_id');
             }
 
             if (! Schema::hasColumn('device_commands', 'fingerprint')) {
@@ -83,6 +89,27 @@ return new class extends Migration
                 $table->timestamp('failed_at')->nullable()->after('expires_at');
             }
         });
+
+        foreach ([
+            'device_commands_device_sync_id_foreign' => ['device_sync_id', 'device_syncs'],
+            'device_commands_employee_id_foreign' => ['employee_id', 'employees'],
+        ] as $constraintName => [$column, $referencedTable]) {
+            $present = DB::selectOne(
+                "SELECT COUNT(*) AS total FROM sys.foreign_keys
+                 WHERE parent_object_id = OBJECT_ID(N'adms.device_commands')
+                   AND name = ?",
+                [$constraintName]
+            );
+
+            if ((int) ($present->total ?? 0) === 0) {
+                // SQL Server defaults to ON DELETE NO ACTION / ON UPDATE NO ACTION.
+                // The established FK name is preserved to make retries safe.
+                Schema::table('device_commands', function (Blueprint $table) use ($constraintName, $column, $referencedTable): void {
+                    $table->foreign($column, $constraintName)
+                        ->references('id')->on($referencedTable);
+                });
+            }
+        }
 
         Schema::table('devices', function (Blueprint $table): void {
             if (! Schema::hasColumn('devices', 'pending_full_resync')) {
