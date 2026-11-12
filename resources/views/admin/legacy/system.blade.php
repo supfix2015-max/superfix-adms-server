@@ -1,5 +1,5 @@
-@extends('admin.layout_biocloud')
-@section('title','BioCloud · System')
+@extends('admin.layout')
+@section('title','ADMS · System')
 @section('page_title','System Operations')
 @section('content')
 <div class="row g-3">
