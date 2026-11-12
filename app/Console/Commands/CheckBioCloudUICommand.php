@@ -4,6 +4,7 @@ namespace App\Console\Commands;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Blade;
 use Illuminate\Support\Facades\Route;
 
 class CheckBioCloudUICommand extends Command
@@ -132,6 +133,31 @@ class CheckBioCloudUICommand extends Command
             $results[] = [$label.' UI theme', $consistent
                 ? 'OK · existing ADMS Enterprise' : 'BLOCKER · conflicting layout'];
             $fail = $fail || ! $consistent;
+        }
+
+        // A view can exist and return a valid View instance yet still
+        // crash every authenticated request with PHP ParseError while Blade
+        // compiles it. Compile the FULL template and syntax-parse the result
+        // without executing it, reading secrets, or writing business data.
+        foreach ([
+            'resources/views/admin/layout.blade.php' => 'Enterprise master layout',
+            'resources/views/admin/legacy/fleet.blade.php' => 'Fleet table',
+            'resources/views/admin/legacy/attendance.blade.php' => 'Attendance transactions',
+            'resources/views/admin/legacy/directory.blade.php' => 'Employee directory',
+            'resources/views/admin/legacy/report.blade.php' => 'Attendance reports',
+            'resources/views/admin/devices/edit.blade.php' => 'Device edit',
+        ] as $path => $label) {
+            try {
+                $compiled = Blade::compileString((string) file_get_contents(base_path($path)));
+                // TOKEN_PARSE throws ParseError on malformed compiled PHP.
+                // Laravel's view:cache only compiles; it does not PHP-lint.
+                token_get_all($compiled, TOKEN_PARSE);
+                $results[] = ["{$label} compiled PHP", 'OK · parsed'];
+            } catch (\Throwable $e) {
+                $results[] = ["{$label} compiled PHP",
+                    'BLOCKER · '.substr($e->getMessage(), 0, 120)];
+                $fail = true;
+            }
         }
 
         // Fail the preflight if the sidebar regresses to a flat collection
