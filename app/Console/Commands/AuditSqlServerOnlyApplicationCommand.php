@@ -17,9 +17,22 @@ class AuditSqlServerOnlyApplicationCommand extends Command
     {
         try {
             $default = config('database.default');
-            if ($default !== 'sqlsrv' || isset(config('database.connections')['mysql'])) {
-                $this->error('Laravel database still references a non-SQL Server operational connection.');
+            $operationalDriver = config('database.connections.sqlsrv.driver');
+            $historicalDriver = config('database.connections.legacy_sqlsrv.driver');
+            if ($default !== 'sqlsrv' || $operationalDriver !== 'sqlsrv' || $historicalDriver !== 'sqlsrv') {
+                $this->error('Operational and historical database connections must both use SQL Server.');
                 return self::FAILURE;
+            }
+
+            // Configurations registered by older images or packages do not
+            // prove that Laravel is USING a MySQL database. Audit the actual
+            // selected and connected drivers instead of failing on their names.
+            $unusedDrivers = array_values(array_intersect(
+                ['mysql', 'mariadb'], array_keys(config('database.connections', []))
+            ));
+            if ($unusedDrivers !== []) {
+                $this->warn('Unused MySQL/MariaDB connection definitions remain in the runtime config: '
+                    .implode(', ', $unusedDrivers).'. Verify the deployed config/database.php image version.');
             }
 
             $operational = DB::connection('sqlsrv');
@@ -34,6 +47,7 @@ class AuditSqlServerOnlyApplicationCommand extends Command
             }
 
             $this->table(['Source', 'Database'], [
+                ['Default connection', $default],
                 ['Laravel operations (SQL Server)', $operationalName],
                 ['Original historical source (SQL Server)', $historicalName],
             ]);
