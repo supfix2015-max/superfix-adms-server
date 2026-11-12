@@ -17,6 +17,16 @@ class SystemClockService
         return $this->now()->format('Y-m-d H:i:s');
     }
 
+    /**
+     * PUSH SDK /iclock/cdata?type=time response: ISO local time with
+     * explicit numeric UTC offset, e.g. 2026-11-12T16:39:00+04:00.
+     * No conversion of existing punch records is involved.
+     */
+    public function formatForPushTimeResponse(): string
+    {
+        return $this->now()->format('Y-m-d\\TH:i:sP');
+    }
+
     public function normalizeForDevice(mixed $value): string
     {
         if ($value === null || $value === '') {
@@ -35,19 +45,9 @@ class SystemClockService
 
     public function deviceTimezoneOption(): string
     {
-        $offsetSeconds = $this->now()->getOffset();
-        $absoluteSeconds = abs($offsetSeconds);
-        $hours = intdiv($absoluteSeconds, 3600);
-        $minutes = intdiv($absoluteSeconds % 3600, 60);
-
-        if ($minutes === 0) {
-            return (string) ($offsetSeconds < 0 ? -$hours : $hours);
-        }
-
-        $decimalHours = $hours + ($minutes / 60);
-        $formatted = rtrim(rtrim(number_format($decimalHours, 2, '.', ''), '0'), '.');
-
-        return $offsetSeconds < 0 ? "-{$formatted}" : $formatted;
+        // PUSH SDK defines TimeZone as a signed offset, e.g. +04:00.
+        // Numeric "4" is not the expected wire format.
+        return $this->now()->format('P');
     }
 
     private function resolveTimezone(): DateTimeZone
