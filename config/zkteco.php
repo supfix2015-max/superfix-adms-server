@@ -69,6 +69,13 @@ return [
     // /iclock/getrequest polls; never available for serial-only HTTP clients.
     'auto_time_sync_enabled' => filter_var(env('ZKTECO_AUTO_TIME_SYNC_ENABLED', false), FILTER_VALIDATE_BOOLEAN),
     'auto_time_sync_interval_hours' => max(1, (int) env('ZKTECO_AUTO_TIME_SYNC_INTERVAL_HOURS', 24)),
+    // Time-only exception for pre-token ADMS devices on HTTP.
+    // Opt in to specific pilot serials. NEVER grants access to queued
+    // biometric, reboot, deletion, enrollment or other commands.
+    'legacy_time_only_enabled' => filter_var(env('ZKTECO_LEGACY_TIME_ONLY_ENABLED', false), FILTER_VALIDATE_BOOLEAN),
+    'legacy_time_only_serials' => array_values(array_filter(array_map('trim', explode(',', (string) env('ZKTECO_LEGACY_TIME_ONLY_SERIALS', ''))))),
+    'legacy_time_only_interval_seconds' => max(60, (int) env('ZKTECO_LEGACY_TIME_ONLY_INTERVAL_SECONDS', 300)),
+
     'auto_pull_employees_on_contact' => env('ZKTECO_AUTO_PULL_EMPLOYEES_ON_CONTACT', false),
     'auto_pull_employees_cooldown_minutes' => (int) env('ZKTECO_AUTO_PULL_EMPLOYEES_COOLDOWN_MINUTES', 15),
     'auto_cleanup_legacy_users' => env('ZKTECO_AUTO_CLEANUP_LEGACY_USERS', false),
