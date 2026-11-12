@@ -699,6 +699,9 @@ class ZKTecoService
                 ->flip();
 
             $rows = $preparedRecords
+                // A single device may resend the same punch more than once
+                // within the same POST. Keep only one row per fingerprint.
+                ->unique('payload_hash')
                 ->reject(fn (array $record) => $existingHashes->has($record['payload_hash']))
                 ->map(function (array $record) use ($device, $employeeMap): array {
                     return [
@@ -724,7 +727,12 @@ class ZKTecoService
                 ->values();
 
             if ($rows->isNotEmpty()) {
-                DB::table('attendance_logs')->insertOrIgnore($rows->all());
+                // SQL Server's grammar throws for insertOrIgnore.
+                // The filtered UNIQUE(payload_hash) index is the final
+                // duplicate-protection guard across concurrent requests.
+                // On an actual insert error the transaction rolls back
+                // and the device will safely retry the batch.
+                DB::table('attendance_logs')->insert($rows->all());
                 $newHashes = $rows->pluck('payload_hash')->all();
             }
         });
@@ -750,7 +758,9 @@ class ZKTecoService
                 'table' => 'ATTLOG',
                 'warnings' => $warnings,
             ],
-            'response' => 'OK:'.count($newHashes)."\r\n",
+            // ACK already-stored punches too, otherwise firmware may keep
+            // retrying a perfectly valid duplicate batch forever.
+            'response' => 'OK:'.$preparedRecords->count()."\r\n",
         ];
     }
 
