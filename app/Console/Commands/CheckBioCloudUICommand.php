@@ -10,7 +10,7 @@ class CheckBioCloudUICommand extends Command
 {
     protected $signature = 'adms:biocloud-ui-check';
 
-    protected $description = 'Read-only check of BioCloud UI routes, source SQL privileges, device license field and command safety';
+    protected $description = 'Read-only check of ADMS Enterprise route integration, source SQL permissions, device license flag and command safety';
 
     public function handle(): int
     {
@@ -63,13 +63,43 @@ class CheckBioCloudUICommand extends Command
         }
 
         foreach ([
-            'admin.biocloud.home', 'admin.directory.index', 'admin.fleet.index',
-            'admin.fleet.license', 'admin.attendance-reports.show',
-            'admin.legacy.index', 'admin.commands.store',
+            'admin.dashboard', 'admin.devices.index', 'admin.devices.edit',
+            'admin.devices.show', 'admin.directory.index', 'admin.fleet.index',
+            'admin.fleet.license', 'admin.fleet.cancel-pending',
+            'admin.attendance-reports.show', 'admin.legacy.index',
+            'admin.legacy.attendance.export', 'admin.biocloud.system',
+            'admin.credentials.index', 'admin.credentials.no-credential',
+            'admin.attendance.index', 'admin.commands.index', 'admin.commands.create',
+            'admin.commands.store', 'admin.logs.index',
         ] as $name) {
             $ok = Route::has($name);
             $results[] = ["Route {$name}", $ok ? 'OK' : 'MISSING'];
             $fail = $fail || ! $ok;
+        }
+
+        // A route's mere existence is insufficient: catch the old UI split
+        // that left /admin/devices on the obsolete table while /admin/fleet
+        // rendered the new license controls.
+        $deviceIndex = Route::getRoutes()->getByName('admin.devices.index');
+        $mainPath = $deviceIndex?->uri() === 'admin/devices';
+        $results[] = ['Canonical fleet URL', $mainPath
+            ? 'OK · /admin/devices' : 'BLOCKER · wrong device page route'];
+        $fail = $fail || ! $mainPath;
+
+        foreach ([
+            'resources/views/admin/legacy/fleet.blade.php' => 'Device Fleet',
+            'resources/views/admin/legacy/directory.blade.php' => 'Original Directory',
+            'resources/views/admin/legacy/attendance.blade.php' => 'Attendance Transactions',
+            'resources/views/admin/legacy/report.blade.php' => 'Attendance Reports',
+            'resources/views/admin/devices/edit.blade.php' => 'Edit Device',
+        ] as $path => $label) {
+            $template = base_path($path);
+            $raw = is_file($template) ? file_get_contents($template) : false;
+            $consistent = is_string($raw) && str_contains($raw, "@extends('admin.layout')")
+                && ! str_contains($raw, 'layout_biocloud');
+            $results[] = [$label.' UI theme', $consistent
+                ? 'OK · existing ADMS Enterprise' : 'BLOCKER · conflicting layout'];
+            $fail = $fail || ! $consistent;
         }
 
         $results[] = ['Command dispatch', config('zkteco.dispatch_commands', false)
