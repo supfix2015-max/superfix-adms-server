@@ -77,6 +77,14 @@
             <input class="form-control" id="punch-to" type="date" name="date_to"
                    value="{{ $filters['date_to'] }}">
         </div>
+        <div class="field" style="flex:0 1 95px;min-width:90px">
+            <label for="punch-perpage">Rows</label>
+            <select name="per_page" id="punch-perpage" class="form-select">
+                @foreach ([20, 50, 100] as $size)
+                    <option value="{{ $size }}" @selected((int) ($filters['per_page'] ?? 20) === $size)>{{ $size }}</option>
+                @endforeach
+            </select>
+        </div>
         <div class="action">
             <button class="btn btn-success btn-sm" type="submit">
                 <i class="bi bi-search me-1"></i> Search
@@ -142,10 +150,10 @@
     <div class="bio-attendance-meta">
         <div>
             <i class="bi bi-database-check me-1"></i>
-            Source: <strong>Att2000_V4.dbo.Attendance</strong> · {{ $rows->count() }} records on this page ·
-            Latest records first
+            Source: <strong>Att2000_V4.dbo.Attendance</strong> · Total Records: <strong>{{ number_format($rows->total()) }}</strong> ·
+            {{ $rows->count() }} this page · Latest first
         </div>
-        <div>{{ $rows->links() }}</div>
+        <div>{{ $rows->links('pagination::bootstrap-5') }}</div>
     </div>
 </div>
 @endsection
