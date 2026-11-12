@@ -9,6 +9,9 @@ use App\Http\Controllers\Admin\DeviceConnectionStatusController;
 use App\Http\Controllers\Admin\EmployeeController;
 use App\Http\Controllers\Admin\LogController;
 use App\Http\Controllers\Admin\LegacyAttendanceController;
+use App\Http\Controllers\Admin\LegacyDirectoryController;
+use App\Http\Controllers\Admin\LegacyFleetController;
+use App\Http\Controllers\Admin\LegacyAttendanceReportController;
 use App\Http\Controllers\Admin\UserSyncController;
 use Illuminate\Support\Facades\Route;
 
@@ -18,6 +21,17 @@ Route::get('/', function () {
 
 Route::middleware(['auth', 'admin'])->prefix('admin')->name('admin.')->group(function () {
     Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
+    // BioCloud-referenced admin workspace. All source directory reads are
+    // restricted to original SQL Server dbo tables; license flag lives in adms.
+    Route::view('/biocloud', 'admin.legacy.home')->name('biocloud.home');
+    Route::view('/biocloud/system', 'admin.legacy.system')->name('biocloud.system');
+    Route::get('/directory/{section}', [LegacyDirectoryController::class, 'index'])
+        ->name('directory.index');
+    Route::get('/fleet', [LegacyFleetController::class, 'index'])->name('fleet.index');
+    Route::post('/fleet/{device}/license-requirement', [LegacyFleetController::class, 'updateLicenseRequirement'])
+        ->name('fleet.license');
+    Route::get('/attendance-reports/{report}', [LegacyAttendanceReportController::class, 'show'])
+        ->name('attendance-reports.show');
     Route::get('/legacy', [LegacyAttendanceController::class, 'index'])->name('legacy.index');
     Route::get('/legacy/attendance/export', [LegacyAttendanceController::class, 'exportAttendance'])->name('legacy.attendance.export');
     Route::get('/device-connectivity', [DeviceConnectionStatusController::class, 'index'])->name('device-connectivity.index');
