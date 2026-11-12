@@ -74,8 +74,10 @@ class LegacyAttendanceReportController extends Controller
                 ->select('BadgeNumber'));
         }
 
-        $rows = $query->orderByRaw($dateExpr.' DESC')
-            ->orderBy('a.BadgeNumber')
+        if ($report !== 'summary') {
+            $query->orderByRaw($dateExpr.' DESC');
+        }
+        $rows = $query->orderBy('a.BadgeNumber')
             ->simplePaginate(50)->withQueryString();
 
         $ids = $rows->getCollection()->pluck('BadgeNumber')->filter()->unique()->values()->all();
