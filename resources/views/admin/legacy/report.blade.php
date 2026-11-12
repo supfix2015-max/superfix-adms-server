@@ -1,15 +1,15 @@
-@extends('admin.layout_biocloud')
+@extends('admin.layout')
 
-@section('title', 'BioCloud · '.$reportName)
+@section('title', 'ADMS · '.$reportName)
 @section('page_title', $reportName)
 @section('page_subtitle', 'Read-only attendance summaries from original Att2000_V4 SQL Server.')
 
 @section('content')
 <style>
-.bc-report-filters{padding:12px;background:#b9dea1;display:flex;gap:8px;flex-wrap:wrap}
+.bc-report-filters{padding:12px;background:#f3f7fc;display:flex;gap:8px;flex-wrap:wrap}
 .bc-report-filters .form-control,.bc-report-filters .form-select{min-width:150px;flex:1;font-size:12px}
 .bc-report-table{font-size:12px;min-width:980px}
-.bc-report-table thead th{background:#2e3844;color:white;white-space:nowrap;font-size:11px}
+.bc-report-table thead th{background:#e9f0f9;color:#334155;white-space:nowrap;font-size:11px}
 .bc-report-table td{white-space:nowrap}
 </style>
 <div class="card p-0 overflow-hidden">
