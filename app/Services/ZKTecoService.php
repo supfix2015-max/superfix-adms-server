@@ -738,10 +738,23 @@ class ZKTecoService
             ];
         }
 
+        // A PUSH device answers DATA QUERY ATTLOG with Stamp=0. Store
+        // this retrospective batch in adms first so historic device-clock
+        // offsets / unknown badges cannot poison dbo.Attendance or cause
+        // full-batch retries. Ordinary live Stamp>0 remains writable.
+        $queryStamp = trim((string) (
+            $context['metadata']['Stamp']
+            ?? $context['metadata']['stamp']
+            ?? ''
+        ));
+        $stagingBackfill = config('zkteco.attlog_backfill_enabled', false)
+            && (string) $device->serial_number === (string) config('zkteco.attlog_backfill_serial', '')
+            && $queryStamp === '0';
+
         // Under explicit cutover, write first to the ORIGINAL SQL Server DB.
         // If that fails, return an error (not OK) to the device; a retry will
         // check and avoid duplicating the original SQL Server punch.
-        if (config('legacy_attendance.attendance_write_enabled', false)) {
+        if (config('legacy_attendance.attendance_write_enabled', false) && ! $stagingBackfill) {
             $sourceRecords = $preparedRecords;
             // Hili's clock was four hours slow before the 2026-11-12
             // correction. Preserve pre-correction device history in adms
@@ -889,6 +902,8 @@ class ZKTecoService
             'metadata' => [
                 'table' => 'ATTLOG',
                 'warnings' => $warnings,
+                'staging_backfill' => $stagingBackfill,
+                'review_cutoff' => config('zkteco.attlog_backfill_review_before'),
             ],
             // ACK already-stored punches too, otherwise firmware may keep
             // retrying a perfectly valid duplicate batch forever.
