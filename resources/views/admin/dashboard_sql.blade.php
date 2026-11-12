@@ -8,6 +8,12 @@
     <a href="{{ route('admin.legacy.index') }}" class="btn btn-outline-primary btn-sm">
         <i class="bi bi-database me-1"></i> Browse Original Database
     </a>
+    <a href="{{ route('admin.device-connectivity.index') }}" class="btn btn-outline-primary btn-sm">
+        <i class="bi bi-broadcast me-1"></i> Device Connectivity
+    </a>
+    <a href="{{ route('admin.commands.create') }}" class="btn btn-outline-primary btn-sm">
+        <i class="bi bi-terminal me-1"></i> Device Commands
+    </a>
 @endsection
 
 @section('extra_css')
