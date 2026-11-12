@@ -154,6 +154,20 @@ class ZKTecoService
                 return $clockOnly."\r\n";
             }
 
+            // An explicitly enabled, one-time retrospective ATTLOG read for
+            // the named original terminal. It is a read request only; it does
+            // NOT expose arbitrary queued commands to tokenless devices.
+            $backfillCommand = $this->unverifiedHistoricalAttendanceQuery($device);
+            if ($backfillCommand !== null) {
+                $this->finishRawLog($rawLog, 'processed', 1, [
+                    'mode' => 'legacy_attlog_backfill_sent',
+                    'command' => 'DATA QUERY ATTLOG',
+                    'authenticated' => $this->hasAuthenticatedDeviceToken($request, $device),
+                ]);
+
+                return $backfillCommand."\r\n";
+            }
+
             // Ordinary commands and their replies still require a verified
             // per-device token; serial-only HTTP access grants time only.
             if (config('zkteco.command_require_token', true)
@@ -228,6 +242,13 @@ class ZKTecoService
                 if ($this->acceptTimeOnlyAcknowledgement($device, $context)) {
                     $this->finishRawLog($rawLog, 'processed', 0, [
                         'mode' => 'legacy_time_only_reply',
+                        'authenticated' => false,
+                    ]);
+                    return "OK\r\n";
+                }
+                if ($this->acceptHistoricalAttendanceQueryReply($device, $context)) {
+                    $this->finishRawLog($rawLog, 'processed', 0, [
+                        'mode' => 'legacy_attlog_backfill_reply',
                         'authenticated' => false,
                     ]);
                     return "OK\r\n";
@@ -721,7 +742,26 @@ class ZKTecoService
         // If that fails, return an error (not OK) to the device; a retry will
         // check and avoid duplicating the original SQL Server punch.
         if (config('legacy_attendance.attendance_write_enabled', false)) {
-            app(LegacyAttendanceWriter::class)->persist($device, $preparedRecords);
+            $sourceRecords = $preparedRecords;
+            // Hili's clock was four hours slow before the 2026-11-12
+            // correction. Preserve pre-correction device history in adms
+            // for reconciliation and avoid silently polluting original
+            // dbo.Attendance with unverified, possibly shifted timestamps.
+            $reviewBefore = (string) config('zkteco.attlog_backfill_review_before', '');
+            $backfillSerial = (string) config('zkteco.attlog_backfill_serial', '');
+            if ($reviewBefore !== '' && $backfillSerial !== ''
+                && hash_equals($backfillSerial, (string) $device->serial_number)
+                && preg_match('/^\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}$/', $reviewBefore)) {
+                $timezone = (string) config('legacy_attendance.attendance_wallclock_timezone', 'Asia/Dubai');
+                $sourceRecords = $preparedRecords->filter(static function (array $record) use ($reviewBefore, $timezone): bool {
+                    return \\Carbon\\CarbonImmutable::instance($record['log_time'])
+                        ->setTimezone($timezone)->format('Y-m-d H:i:s') >= $reviewBefore;
+                })->values();
+            }
+
+            if ($sourceRecords->isNotEmpty()) {
+                app(LegacyAttendanceWriter::class)->persist($device, $sourceRecords);
+            }
         }
 
         $newHashes = [];
@@ -1171,6 +1211,112 @@ class ZKTecoService
             if ($id !== '' && hash_equals($expected, $id)
                 && in_array($command, ['SET OPTIONS', 'SET OPTION'], true)) {
                 Cache::store('file')->forget($key);
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Scoped one-shot retroactive read from one original ZKTeco terminal.
+     * A public-HTTP serial is NOT proof of device identity: this exception
+     * only requests ATTLOG and never authorizes ordinary device commands.
+     */
+    private function unverifiedHistoricalAttendanceQuery(Device $device): ?string
+    {
+        if (! config('adms_pilot.enabled', false)
+            || ! config('zkteco.attlog_backfill_enabled', false)
+            || ! config('zkteco.command_require_token', true)
+            || ! $device->exists || $device->trashed()) {
+            return null;
+        }
+
+        $serial = trim((string) ($device->serial_number ?: $device->sn));
+        if ($serial === '' || ! hash_equals(
+            (string) config('zkteco.attlog_backfill_serial', ''),
+            $serial
+        )) {
+            return null;
+        }
+
+        // Require original SQL Server registration, never unknown devices.
+        if (! DB::connection('legacy_sqlsrv')->table('dbo.Device')
+            ->where('DeviceSerialNumber', $serial)->exists()) {
+            return null;
+        }
+
+        $start = (string) config('zkteco.attlog_backfill_start', '');
+        $end = (string) config('zkteco.attlog_backfill_end', '');
+        if ($end === '') {
+            $end = $this->systemClockService->formatForDevice();
+        }
+        foreach ([$start, $end] as $value) {
+            if (! preg_match('/^\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}$/', $value)) {
+                return null;
+            }
+            try {
+                $date = \\Carbon\\CarbonImmutable::createFromFormat('!Y-m-d H:i:s', $value, 'Asia/Dubai');
+                if ($date === false || $date->format('Y-m-d H:i:s') !== $value) {
+                    return null;
+                }
+            } catch (\\Throwable) {
+                return null;
+            }
+        }
+        if ($start > $end) {
+            return null;
+        }
+
+        // A fixed end date is needed for a stable one-off cache key.
+        // An omitted end uses a fixed 23:59:59 of today's UAE date.
+        if ((string) config('zkteco.attlog_backfill_end', '') === '') {
+            $end = substr($end, 0, 10).' 23:59:59';
+        }
+
+        $key = 'adms:attendance-history-query:'.hash('sha256', $serial.'|'.$start.'|'.$end);
+        $cache = Cache::store('file');
+        if (! $cache->add($key.':issued', true, 14 * 86400)) {
+            return null;
+        }
+
+        // A positive int <= 2^31-1, distinct from hourly clock command IDs.
+        $commandId = (string) (now()->timestamp - 1000000000);
+        $cache->put($key.':reply-id', $commandId, 14 * 86400);
+
+        return 'C:'.$commandId.':DATA QUERY ATTLOG StartTime='
+            .$start."\\t".'EndTime='.$end;
+    }
+
+    private function acceptHistoricalAttendanceQueryReply(Device $device, array $context): bool
+    {
+        if (! config('zkteco.attlog_backfill_enabled', false)
+            || ! config('zkteco.command_require_token', true)
+            || trim((string) ($device->serial_number ?: $device->sn))
+                !== (string) config('zkteco.attlog_backfill_serial', '')) {
+            return false;
+        }
+
+        $start = (string) config('zkteco.attlog_backfill_start', '');
+        $end = (string) config('zkteco.attlog_backfill_end', '');
+        if ($end === '') {
+            $end = $this->systemClockService->now()->format('Y-m-d').' 23:59:59';
+        }
+
+        $serial = trim((string) ($device->serial_number ?: $device->sn));
+        $key = 'adms:attendance-history-query:'.hash('sha256', $serial.'|'.$start.'|'.$end);
+        $expected = (string) Cache::store('file')->get($key.':reply-id', '');
+        if ($expected === '') {
+            return false;
+        }
+
+        foreach ($this->extractCommandReplyRecords($context) as $record) {
+            $id = trim((string) ($record['ID'] ?? $record['CmdID'] ?? $record['id'] ?? ''));
+            $command = strtoupper(trim((string) ($record['CMD'] ?? $record['Command'] ?? '')));
+            if ($id !== '' && hash_equals($expected, $id) && $command === 'DATA') {
+                // Return may be a negative error code. Record the exact
+                // reply status for manual diagnostics; never delete any logs.
+                Cache::store('file')->put($key.':last-response', $record, 14 * 86400);
                 return true;
             }
         }
