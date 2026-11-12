@@ -129,26 +129,52 @@ return new class extends Migration
             }
         });
 
-        Schema::table('employees', function (Blueprint $table): void {
-            // Filtered unique index is created below for SQL Server nullable sync_uid.
-            $table->index(['sync_enabled', 'status'], 'employees_sync_enabled_status_index');
-            $table->index(['status', 'last_sync_validated_at'], 'employees_sync_validated_index');
-        });
+        // SQL Server may commit earlier DDL before a later operation fails.
+        // A retry must not fail on already-created indexes.
+        $indexMissing = static function (string $table, string $index): bool {
+            $found = DB::selectOne(
+                "SELECT COUNT(*) AS total FROM sys.indexes
+                 WHERE object_id = OBJECT_ID(?) AND name = ?",
+                ['adms.'.$table, $index]
+            );
 
-        DB::statement(
-            'CREATE UNIQUE INDEX [employees_sync_uid_unique] ON [adms].[employees] ([sync_uid]) '
-            .'WHERE [sync_uid] IS NOT NULL'
-        );
+            return (int) ($found->total ?? 0) === 0;
+        };
 
-        Schema::table('device_commands', function (Blueprint $table): void {
-            $table->index(['device_id', 'fingerprint', 'status'], 'device_commands_fingerprint_status_index');
-            $table->index(['status', 'expires_at'], 'device_commands_expiration_index');
-            $table->index(['device_sync_id', 'status'], 'device_commands_sync_status_index');
-        });
+        if ($indexMissing('employees', 'employees_sync_enabled_status_index')) {
+            Schema::table('employees', static function (Blueprint $table): void {
+                $table->index(['sync_enabled', 'status'], 'employees_sync_enabled_status_index');
+            });
+        }
+        if ($indexMissing('employees', 'employees_sync_validated_index')) {
+            Schema::table('employees', static function (Blueprint $table): void {
+                $table->index(['status', 'last_sync_validated_at'], 'employees_sync_validated_index');
+            });
+        }
+        if ($indexMissing('employees', 'employees_sync_uid_unique')) {
+            DB::statement(
+                'CREATE UNIQUE INDEX [employees_sync_uid_unique] ON [adms].[employees] ([sync_uid]) '
+                .'WHERE [sync_uid] IS NOT NULL'
+            );
+        }
 
-        Schema::table('devices', function (Blueprint $table): void {
-            $table->index(['pending_full_resync', 'status'], 'devices_resync_status_index');
-        });
+        foreach ([
+            'device_commands_fingerprint_status_index' => ['device_id', 'fingerprint', 'status'],
+            'device_commands_expiration_index' => ['status', 'expires_at'],
+            'device_commands_sync_status_index' => ['device_sync_id', 'status'],
+        ] as $name => $columns) {
+            if ($indexMissing('device_commands', $name)) {
+                Schema::table('device_commands', static function (Blueprint $table) use ($columns, $name): void {
+                    $table->index($columns, $name);
+                });
+            }
+        }
+
+        if ($indexMissing('devices', 'devices_resync_status_index')) {
+            Schema::table('devices', static function (Blueprint $table): void {
+                $table->index(['pending_full_resync', 'status'], 'devices_resync_status_index');
+            });
+        }
     }
 
     public function down(): void
