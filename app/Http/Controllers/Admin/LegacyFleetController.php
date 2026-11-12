@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\Device;
+use App\Models\DeviceCommand;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Pagination\LengthAwarePaginator;
@@ -114,6 +115,28 @@ class LegacyFleetController extends Controller
         return back()->with('success', sprintf(
             '%s: Edit License requirement is %s. No device command was sent.',
             $device->serial_number, $device->requires_license ? 'enabled' : 'disabled'
+        ));
+    }
+
+    public function cancelPendingCommands(Request $request, Device $device): RedirectResponse
+    {
+        abort_unless(config('legacy_attendance.browser_enabled', false), 404);
+        $request->validate(['confirmation' => ['required', 'in:CANCEL-PENDING']]);
+
+        // Only unsent pending rows in isolated adms.device_commands can be
+        // cancelled. Never claim a command already SENT can be recalled.
+        $cancelled = $device->commands()
+            ->where('status', DeviceCommand::STATUS_PENDING)
+            ->update([
+                'status' => DeviceCommand::STATUS_FAILED,
+                'failed_at' => now(),
+                'error_message' => 'Cancelled by the administrator before dispatch',
+                'updated_at' => now(),
+            ]);
+
+        return back()->with('success', sprintf(
+            '%d unsent commands cancelled for %s; already dispatched commands were not changed.',
+            $cancelled, $device->serial_number
         ));
     }
 
