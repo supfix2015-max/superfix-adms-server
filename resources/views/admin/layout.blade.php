@@ -5,6 +5,8 @@
     $pageSubtitle = trim($__env->yieldContent('page_subtitle', 'Operational visibility for devices, biometric enrollment, and attendance workflows.'));
     $originalMode = config('legacy_attendance.browser_enabled', false);
     $navItems = $originalMode ? [
+        ['route' => route('admin.biocloud.home'), 'match' => 'admin.biocloud.*', 'icon' => 'bi-house', 'label' => 'BioCloud Workspace'],
+        ['route' => route('admin.fleet.index'), 'match' => 'admin.fleet.*', 'icon' => 'bi-hdd-network', 'label' => 'Device Fleet & Licenses'],
         ['route' => route('admin.dashboard'), 'match' => 'admin.dashboard', 'icon' => 'bi-grid-1x2-fill', 'label' => 'Dashboard'],
         ['route' => route('admin.legacy.index', ['tab' => 'devices']), 'match' => 'admin.legacy.*', 'tab' => 'devices', 'icon' => 'bi-hdd-network-fill', 'label' => 'Devices (SQL)'],
         ['route' => route('admin.device-connectivity.index'), 'match' => 'admin.device-connectivity.*', 'icon' => 'bi-broadcast-pin', 'label' => 'Devices • Live Status'],
