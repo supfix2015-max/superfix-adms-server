@@ -89,6 +89,15 @@ class ZKTecoService
             $device = $this->resolveDevice($request, $context);
             $this->attachRawLogDevice($rawLog, $device);
             $this->touchDevice($device, $request, $context);
+
+            // Read-only pilot mode: never dispatch a queued device command or
+            // auto-enroll users from copied MySQL state. The device may poll safely.
+            if (! config('zkteco.dispatch_commands', false)) {
+                $this->finishRawLog($rawLog, 'processed', 0, ['command' => null, 'dispatch_disabled' => true]);
+                $this->logRequestHandled($context['endpoint'], $device, ['record_count' => 0, 'dispatch_disabled' => true]);
+                return "OK\r\n";
+            }
+
             $this->ensureAutomaticEmployeePullQueued($device);
 
             $command = $this->findDispatchableCommand($device);
@@ -591,6 +600,13 @@ class ZKTecoService
                 ],
                 'response' => "OK:0\r\n",
             ];
+        }
+
+        // Under explicit cutover, write first to the ORIGINAL SQL Server DB.
+        // If that fails, return an error (not OK) to the device; a retry will
+        // check and avoid duplicating the original SQL Server punch.
+        if (config('legacy_attendance.attendance_write_enabled', false)) {
+            app(LegacyAttendanceWriter::class)->persist($device, $preparedRecords);
         }
 
         $newHashes = [];

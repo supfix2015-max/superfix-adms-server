@@ -5,6 +5,11 @@
 @section('page_subtitle', 'Manage employee identities, sync status, credentials, and biometric replay from a single directory.')
 
 @section('page_actions')
+    @if (config('legacy_attendance.browser_enabled', false))
+        <a href="{{ route('admin.legacy.index', ['tab' => 'employees']) }}" class="btn btn-outline-primary">
+            <i class="bi bi-database me-1"></i> Original SQL Server Employees
+        </a>
+    @endif
     <a href="{{ route('admin.employees.create') }}" class="btn btn-success">
         <i class="bi bi-plus-lg me-1"></i>
         Add Employee
