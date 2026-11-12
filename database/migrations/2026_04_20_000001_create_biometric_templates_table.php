@@ -28,9 +28,6 @@ return new class extends Migration
             );
         });
 
-        if (DB::getDriverName() === 'mysql') {
-            DB::statement('ALTER TABLE biometric_templates MODIFY template_data LONGBLOB NULL');
-        }
     }
 
     public function down(): void

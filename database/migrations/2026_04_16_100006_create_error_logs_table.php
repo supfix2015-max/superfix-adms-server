@@ -11,10 +11,10 @@ return new class extends Migration
         Schema::create('error_logs', function (Blueprint $table) {
             $table->id();
             $table->foreignId('device_id')->nullable()->constrained('devices')->onDelete('set null');
-            $table->enum('type', ['device_error', 'api_error', 'queue_error', 'system_error'])->index();
+            $table->string('type', 32)->index();
             $table->string('error_code')->nullable();
             $table->text('message');
-            $table->enum('severity', ['low', 'medium', 'high', 'critical'])->default('medium')->index();
+            $table->string('severity', 32)->default('medium')->index();
             $table->boolean('resolved')->default(false);
             $table->softDeletes();
             $table->timestamps();

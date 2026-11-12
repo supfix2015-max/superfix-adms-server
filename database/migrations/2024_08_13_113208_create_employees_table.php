@@ -19,7 +19,7 @@ return new class extends Migration
             $table->string('phone')->nullable();
             $table->string('department')->nullable();
             $table->date('hire_date')->nullable();
-            $table->enum('status', ['active', 'inactive', 'on_leave'])->default('active');
+            $table->string('status', 32)->default('active');
             $table->text('notes')->nullable();
             $table->softDeletes();
             $table->timestamps();
