@@ -33,6 +33,7 @@ class LegacyAttendanceController extends Controller
             'name' => ['nullable', 'string', 'max:80'],
             'department' => ['nullable', 'string', 'max:80'],
             'device' => ['nullable', 'string', 'max:80'],
+            'per_page' => ['nullable', Rule::in(['20', '50', '100'])],
         ]);
 
         $tab = $filters['tab'] ?? 'employees';
@@ -143,9 +144,10 @@ class LegacyAttendanceController extends Controller
             ->select(['DeviceSerialNumber', 'DeviceAliasName', 'DeviceName'])
             ->orderBy('DeviceAliasName')->get();
 
+        $pageSize = (int) ($filters['per_page'] ?? 20);
         $rows = $this->attendanceQuery($filters, $search)
             ->orderByDesc('a.VerifyTime')->orderByDesc('a.Id')
-            ->simplePaginate(50)->withQueryString();
+            ->paginate($pageSize)->withQueryString();
 
         return view('admin.legacy.attendance', compact(
             'rows', 'filters', 'search', 'departments', 'departmentIds', 'devices'
