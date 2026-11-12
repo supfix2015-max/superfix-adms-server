@@ -1,4 +1,4 @@
-@extends('admin.layout_biocloud')
+@extends('admin.layout')
 
 @section('title', 'Attendance Transactions')
 @section('page_title', 'Attendance · Transactions')
@@ -7,22 +7,22 @@
 @section('content')
 <style>
     .bio-attendance-shell { border: 1px solid #dce5df; border-radius: 10px; overflow: hidden; background: white; }
-    .bio-attendance-filter { display: flex; align-items: end; gap: 9px; flex-wrap: wrap; padding: 13px; background: #b7db9d; border-bottom: 1px solid #96c176; }
+    .bio-attendance-filter { display: flex; align-items: end; gap: 9px; flex-wrap: wrap; padding: 13px; background: #f3f7fc; border-bottom: 1px solid #dce5f0; }
     .bio-attendance-filter .field { flex: 1 1 140px; min-width: 130px; }
     .bio-attendance-filter .field.name-field { flex-basis: 190px; }
     .bio-attendance-filter .field.date-field { flex-basis: 155px; }
-    .bio-attendance-filter label { display: block; margin-bottom: 4px; color: #30412c; font-size: 11px; font-weight: 700; }
+    .bio-attendance-filter label { display: block; margin-bottom: 4px; color: #37465c; font-size: 11px; font-weight: 700; }
     .bio-attendance-filter .form-control, .bio-attendance-filter .form-select { height: 35px; border-radius: 4px; font-size: 12px; }
     .bio-attendance-filter .action { display: flex; gap: 6px; padding-bottom: 1px; }
     .bio-attendance-filter .btn { white-space: nowrap; }
     .bio-attendance-table { margin: 0; font-size: 12px; min-width: 1180px; }
-    .bio-attendance-table thead th { position: sticky; top: 0; z-index: 1; background: #2e3845; color: #fff; font-size: 11px; font-weight: 700; vertical-align: middle; white-space: nowrap; border-right: 1px solid #566170; }
+    .bio-attendance-table thead th { position: sticky; top: 0; z-index: 1; background: #e9f0f9; color: #334155; font-size: 11px; font-weight: 700; vertical-align: middle; white-space: nowrap; border-right: 1px solid #d5deeb; }
     .bio-attendance-table tbody td { vertical-align: middle; border-right: 1px solid #e6e9e6; }
-    .bio-attendance-table tbody tr:hover td { background: #eaf4e5; }
+    .bio-attendance-table tbody tr:hover td { background: #f1f6fe; }
     .bio-attendance-table .serial { color: #667381; font-family: monospace; }
     .bio-attendance-table .punch { white-space: nowrap; font-variant-numeric: tabular-nums; font-weight: 600; }
-    .bio-attendance-table .status-in { color: #16734d; }
-    .bio-attendance-table .status-out { color: #8c4d1d; }
+    .bio-attendance-table .status-in { color: #11664c; }
+    .bio-attendance-table .status-out { color: #90571d; }
     .bio-attendance-meta { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; padding: 10px 14px; color: #506072; font-size: 12px; }
     .bio-attendance-meta .pagination { margin: 0; }
     @media(max-width: 700px) {
