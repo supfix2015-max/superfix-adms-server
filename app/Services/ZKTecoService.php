@@ -90,6 +90,16 @@ class ZKTecoService
             $this->attachRawLogDevice($rawLog, $device);
             $this->touchDevice($device, $request, $context);
 
+            // Do not disclose queued commands to a claimed serial on the
+            // legacy HTTP receiver unless its device token is verified.
+            if (config('zkteco.command_require_token', true)
+                && ! $this->hasAuthenticatedDeviceToken($request, $device)) {
+                $this->finishRawLog($rawLog, 'processed', 0, [
+                    'command' => null, 'command_authorization' => 'required',
+                ]);
+                return "OK\r\n";
+            }
+
             // Read-only pilot mode: never dispatch a queued device command or
             // auto-enroll users from copied MySQL state. The device may poll safely.
             if (! config('zkteco.dispatch_commands', false)) {
@@ -142,6 +152,12 @@ class ZKTecoService
             $device = $this->resolveDevice($request, $context);
             $this->attachRawLogDevice($rawLog, $device);
             $this->touchDevice($device, $request, $context);
+
+            // A spoofed serial must not acknowledge or cancel pending work.
+            if (config('zkteco.command_require_token', true)
+                && ! $this->hasAuthenticatedDeviceToken($request, $device)) {
+                throw new \Illuminate\Auth\Access\AuthorizationException('Device command callback authentication required');
+            }
 
             $records = $this->extractCommandReplyRecords($context);
             if ($records === []) {
@@ -303,6 +319,20 @@ class ZKTecoService
             'op_stamp' => $query['OpStamp'] ?? $bodyPairs['OpStamp'] ?? null,
             'metadata' => $metadata,
         ];
+    }
+
+    private function hasAuthenticatedDeviceToken(Request $request, Device $device): bool
+    {
+        $key = (string) config('zkteco.token_query_key', 'token');
+        $provided = $request->query($key)
+            ?: $request->header('X-Device-Token')
+            ?: $request->bearerToken();
+
+        return is_string($device->api_token)
+            && $device->api_token !== ''
+            && is_string($provided)
+            && $provided !== ''
+            && hash_equals($device->api_token, $provided);
     }
 
     private function resolveDevice(Request $request, array $context): Device
