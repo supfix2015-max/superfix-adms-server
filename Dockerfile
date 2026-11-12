@@ -41,6 +41,7 @@ RUN mkdir -p storage/app/public storage/framework/cache/data storage/framework/s
   && php -l database/migrations/2026_11_12_000002_add_license_requirement_to_adms_devices.php \
   && php -l app/Console/Commands/InspectLegacyAttendanceWriteReadinessCommand.php \
   && php -l app/Console/Commands/ImportMissingHiliAttendanceCommand.php \
+  && php -l app/Console/Commands/CheckBioCloudUICommand.php \
   && php -l app/Services/LegacyAttendanceWriter.php \
   && php -l app/Services/LegacyAttendanceValueMapper.php \
   && php -l app/Services/LegacyDashboardService.php \
