@@ -48,6 +48,15 @@
         <a href="{{ route('admin.commands.index') }}" class="btn btn-outline-primary btn-sm">Command log</a>
     </div>
 
+    @unless ($licenseColumnReady)
+        <div class="alert alert-info rounded-0 m-0 py-2 small" role="status">
+            <i class="bi bi-info-circle me-1"></i>
+            <strong>Edit License tracking is pending the DBA column update.</strong>
+            The checkbox is visible but locked until adms.devices.requires_license exists.
+            All other device screens remain accessible.
+        </div>
+    @endunless
+
     @unless ($dispatchEnabled)
         <div class="alert alert-warning rounded-0 m-0 py-2 small">
             <strong>Command delivery is locked.</strong>
@@ -95,11 +104,11 @@
                                     @csrf
                                     <input type="hidden" name="requires_license" value="0">
                                     <input type="checkbox" class="form-check-input" name="requires_license" value="1"
-                                           id="license-{{ $row['id'] }}" @checked($row['requires_license'])>
+                                           id="license-{{ $row['id'] }}" @checked($row['requires_license']) @disabled(! $licenseColumnReady)>
                                     <label for="license-{{ $row['id'] }}" class="m-0 small">
                                         {{ $row['requires_license'] ? 'Required' : 'Not required' }}
                                     </label>
-                                    <button type="submit" class="btn btn-outline-success btn-sm" title="Save Edit License flag only">
+                                    <button type="submit" class="btn btn-outline-success btn-sm" title="Save Edit License flag only" @disabled(! $licenseColumnReady)>
                                         Save
                                     </button>
                                 </form>
