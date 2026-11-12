@@ -31,6 +31,16 @@ class AppServiceProvider extends ServiceProvider
             return;
         }
 
+        // During the Docker build, Composer discovers packages before SQL
+        // secrets exist. The only permitted exception is that exact CLI
+        // command with missing deployment configuration.
+        if (app()->runningInConsole()
+            && ($_SERVER['argv'][1] ?? '') === 'package:discover'
+            && trim((string) env('ADMS_SQLSRV_DATABASE', '')) === ''
+            && trim((string) env('LEGACY_SQLSRV_DATABASE', '')) === '') {
+            return;
+        }
+
         if (config('database.default') !== 'sqlsrv'
             || strcasecmp((string) config('database.connections.sqlsrv.schema'), 'adms') !== 0) {
             throw new LogicException('Unsafe SQL Server-only connection configuration.');
