@@ -37,9 +37,14 @@ return new class extends Migration
             }
         }
 
-        Schema::table('attendance_logs', function (Blueprint $table): void {
-            $table->unique('payload_hash', 'attendance_logs_payload_hash_unique');
-        });
+        // SQL Server permits only one NULL under a normal UNIQUE constraint.
+        // Older/partial events may have NULL hashes, so enforce uniqueness
+        // only for non-NULL hashes without modifying the historical DB.
+        DB::statement(
+            'CREATE UNIQUE INDEX [attendance_logs_payload_hash_unique] '
+            .'ON [dbo].[attendance_logs] ([payload_hash]) '
+            .'WHERE [payload_hash] IS NOT NULL'
+        );
 
         Schema::table('raw_logs', function (Blueprint $table): void {
             $table->index(['endpoint', 'processing_status'], 'raw_logs_endpoint_status_index');
@@ -52,9 +57,7 @@ return new class extends Migration
             $table->dropIndex('device_commands_dispatch_index');
         });
 
-        Schema::table('attendance_logs', function (Blueprint $table): void {
-            $table->dropUnique('attendance_logs_payload_hash_unique');
-        });
+        DB::statement('DROP INDEX [attendance_logs_payload_hash_unique] ON [dbo].[attendance_logs]');
 
         Schema::table('raw_logs', function (Blueprint $table): void {
             $table->dropIndex('raw_logs_endpoint_status_index');
