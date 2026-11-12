@@ -124,6 +124,14 @@ class DeviceController extends Controller
 
         // Only the operational adms.devices row is updated; the original
         // dbo.Device serial and identity are immutable in this workflow.
+        $column = \Illuminate\Support\Facades\DB::connection('sqlsrv')->selectOne(
+            "SELECT COL_LENGTH(N'adms.devices', N'requires_license') AS field_length"
+        );
+        if ($column === null || $column->field_length === null) {
+            // Device alias and endpoint edits remain valid even while DBA
+            // prepares the optional licensing flag schema migration.
+            unset($validated['requires_license']);
+        }
         $this->deviceService->updateDevice($device->id, $validated);
 
         return redirect()->route(
