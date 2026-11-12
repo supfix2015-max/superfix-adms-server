@@ -44,7 +44,11 @@ class ZKTecoCommandFormatter
             return "C:{$command->id}:SET OPTION {$parameters['option']}={$parameters['value']}";
         }
 
-        $timestamp = $this->systemClockService->normalizeForDevice($parameters['timestamp'] ?? null);
+        // Scheduled automatic sync must use the server clock at actual
+        // transmission time, not the time a command was queued yesterday.
+        $timestamp = ! empty($parameters['sync_on_dispatch'])
+            ? $this->systemClockService->formatForDevice()
+            : $this->systemClockService->normalizeForDevice($parameters['timestamp'] ?? null);
 
         return "C:{$command->id}:SET OPTION DateTime={$timestamp}";
     }
