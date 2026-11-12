@@ -19,6 +19,7 @@ Route::get('/', function () {
 Route::middleware(['auth', 'admin'])->prefix('admin')->name('admin.')->group(function () {
     Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
     Route::get('/legacy', [LegacyAttendanceController::class, 'index'])->name('legacy.index');
+    Route::get('/legacy/attendance/export', [LegacyAttendanceController::class, 'exportAttendance'])->name('legacy.attendance.export');
     Route::get('/device-connectivity', [DeviceConnectionStatusController::class, 'index'])->name('device-connectivity.index');
     Route::get('/connectivity', [DeviceConnectionStatusController::class, 'index'])->name('connectivity.index');
 
