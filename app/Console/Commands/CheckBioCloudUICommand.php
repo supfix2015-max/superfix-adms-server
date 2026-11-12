@@ -86,6 +86,25 @@ class CheckBioCloudUICommand extends Command
             ? 'OK · /admin/devices' : 'BLOCKER · wrong device page route'];
         $fail = $fail || ! $mainPath;
 
+        if (config('legacy_attendance.browser_enabled', false)) {
+            try {
+                // Invoke the actual controller, not a hardcoded route string.
+                // This is SELECT-only and never sends commands or changes rows.
+                $view = app(\App\\Http\\Controllers\\Admin\\DeviceController::class)
+                    ->index(\Illuminate\\Http\\Request::create('/admin/devices', 'GET'));
+                $joinedFleet = $view instanceof \Illuminate\\Contracts\\View\\View
+                    && $view->name() === 'admin.legacy.fleet';
+                $results[] = ['Actual /admin/devices controller view', $joinedFleet
+                    ? 'OK · combined original + live device fleet' : 'BLOCKER · stale device listing'];
+                $fail = $fail || ! $joinedFleet;
+            } catch (\Throwable $e) {
+                report($e);
+                $results[] = ['Actual /admin/devices controller view',
+                    'FAILED · check legacy reader / adms connection and log'];
+                $fail = true;
+            }
+        }
+
         foreach ([
             'resources/views/admin/legacy/fleet.blade.php' => 'Device Fleet',
             'resources/views/admin/legacy/directory.blade.php' => 'Original Directory',
