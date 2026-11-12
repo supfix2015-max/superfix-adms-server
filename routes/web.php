@@ -5,6 +5,7 @@ use App\Http\Controllers\Admin\CommandController;
 use App\Http\Controllers\Admin\CredentialController;
 use App\Http\Controllers\Admin\DashboardController;
 use App\Http\Controllers\Admin\DeviceController;
+use App\Http\Controllers\Admin\DeviceConnectionStatusController;
 use App\Http\Controllers\Admin\EmployeeController;
 use App\Http\Controllers\Admin\LogController;
 use App\Http\Controllers\Admin\LegacyAttendanceController;
@@ -18,6 +19,7 @@ Route::get('/', function () {
 Route::middleware(['auth', 'admin'])->prefix('admin')->name('admin.')->group(function () {
     Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
     Route::get('/legacy', [LegacyAttendanceController::class, 'index'])->name('legacy.index');
+    Route::get('/device-connectivity', [DeviceConnectionStatusController::class, 'index'])->name('device-connectivity.index');
 
     Route::resource('devices', DeviceController::class);
     Route::post('devices/{device}/refresh-token', [DeviceController::class, 'refreshToken'])->name('devices.refresh-token');
