@@ -46,7 +46,7 @@ cd /var/www/html
 php artisan config:clear
 
 php artisan tinker --execute='
-$devices = \\App\\Models\\Device::query()->orderBy("name")->get();
+$devices = \App\Models\Device::query()->orderBy("name")->get();
 $report = $devices->map(function ($d) {
     $last = $d->rawLogs()
         ->where("endpoint", "/iclock/getrequest")
