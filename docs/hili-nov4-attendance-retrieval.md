@@ -98,3 +98,44 @@ php artisan adms:audit-hili-backfill --serial=CEG9223661162 --from=2026-11-04 --
 It compares each staged event (Asia/Dubai local wall clock) to official dbo.Attendance using exact badge, device serial, direction and time, with optional candidate matches at +4h and -4h. It also validates original dbo.Employee badges and reports staged duplicates or unrecognized statuses. Reports per day + examples. It uses SELECT only; will never import, adjust or rewrite the original records.
 
 At 2026-11-12 ~21:36, Hili staged count rose 15 -> 213; staged day counts Nov 4–12 = [25,25,14,25,26,26,26,26,20], original official count within Nov 4–12 = 90. Difference 213-90 DOES NOT equal missing event count. Wait for exact-match audit before any historical import, especially given known four-hour device-clock problem before Nov 12.
+
+
+## Original historical recovery (user audit: 213 staged, 90 exact, 123 unmatched)
+
+Audit on Nov 12 2026:
+- 213 Hili staged ATTLOG in 2026-11-04..2026-11-12.
+- Exact match in dbo.Attendance: 90.
+- No exact match: 123. All 123 have known original BadgeNumbers and unambiguous Status, no staging duplicates; offset candidates at +4h/-4h: 0.
+- Unmatched by staging date: Nov 4 = 20, Nov 5 = 25, Nov 6 = 14, Nov 7 = 25, Nov 8 = 26, Nov 9 = 13. Nov 10-12 = 0.
+- **Do not infer that the older device timestamps are correct merely because +4-hour matches are absent.** The physical clock on Nov 12 was known to be four hours behind. Compare sample timestamps with authorized attendance records or shift schedules before final historical import.
+
+New command has dry run as its default and is permanently scoped to Hili serial CEG9223661162 and exact Nov 4-12 dates.
+
+1. Deploy draft branch V2 and ensure read-only/dedicated SQL writer permissions still match the earlier audit.
+2. Make a fresh `Att2000_V4` database backup/snapshot; verify it can be restored. Leave direct Hili live writer and hourly fleet clock sync enabled as previously configured, but **keep writer allowlist only Hili**.
+3. Review the 123 unmatched historical wall-clock timestamps; this script **never shifts time by four hours**. Any suspected incorrect historical timestamps should be reviewed manually before doing `--apply`.
+4. Run preview:
+```bash
+cd /var/www/html
+php artisan adms:import-missing-hili-attendance --serial=CEG9223661162 --from=2026-11-04 --to=2026-11-12
+```
+Expected missing = 123 if no new source records arrived.
+5. ONLY when date/time records and fresh backup verified, explicitly execute:
+```bash
+php artisan adms:import-missing-hili-attendance \
+  --serial=CEG9223661162 \
+  --from=2026-11-04 \
+  --to=2026-11-12 \
+  --apply --expect=123 --backup-confirmed \
+  --confirm=IMPORT-HILI-20261104-20261112
+```
+This executes only if exact expected count remains 123 and there are no unknown codes, staged duplicates, invalid statuses or +4/-4-h candidate matches. If any conditions change, command rejects before writing. For each candidate it calls existing `LegacyAttendanceWriter::persist` using the restricted writer login, SELECT+INSERT ONLY. The writer checks exact preexisting event and serial/badge/time/direction transactionally with SQL Server `sp_getapplock`; no UPDATE or DELETE, no EmployeeTemplate access, no change to adms.attendance_logs. If stopped halfway, re-run preview, accept its new reduced missing count, then issue a NEW explicit --expect to safely finish.
+6. Verify original count and rerun read-only audit:
+```bash
+php artisan adms:audit-hili-backfill --serial=CEG9223661162 --from=2026-11-04 --to=2026-11-12
+```
+After a full clean import, expect exact=213 and unmatched=0 within the original fixed staging snapshot (subject to concurrent live punches). Do not expect original padded-query total to be 213 because the padded query includes Nov 3 and Nov 13.
+
+After completing the one-time device retrieval, turn off ONLY `ZKTECO_ATTLOG_BACKFILL_ENABLED` and redeploy; keep `ZKTECO_ATTLOG_BACKFILL_SERIAL`, `ZKTECO_ATTLOG_BACKFILL_REVIEW_BEFORE`, `ZKTECO_LEGACY_TIME_ONLY_ENABLED` and `ZKTECO_LEGACY_TIME_ONLY_ALL_REGISTERED` as configured, to preserve historical quarantine and **hourly automatic clock synchronization**.
+
+No database schema changes are needed.
