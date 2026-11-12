@@ -42,7 +42,7 @@ return new class extends Migration
         // only for non-NULL hashes without modifying the historical DB.
         DB::statement(
             'CREATE UNIQUE INDEX [attendance_logs_payload_hash_unique] '
-            .'ON [dbo].[attendance_logs] ([payload_hash]) '
+            .'ON [adms].[attendance_logs] ([payload_hash]) '
             .'WHERE [payload_hash] IS NOT NULL'
         );
 
@@ -57,7 +57,7 @@ return new class extends Migration
             $table->dropIndex('device_commands_dispatch_index');
         });
 
-        DB::statement('DROP INDEX [attendance_logs_payload_hash_unique] ON [dbo].[attendance_logs]');
+        DB::statement('DROP INDEX [attendance_logs_payload_hash_unique] ON [adms].[attendance_logs]');
 
         Schema::table('raw_logs', function (Blueprint $table): void {
             $table->dropIndex('raw_logs_endpoint_status_index');
