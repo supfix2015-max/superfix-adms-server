@@ -40,6 +40,22 @@ class ZKTecoService
             $this->attachRawLogDevice($rawLog, $device);
             $this->touchDevice($device, $request, $context);
 
+            // PUSH SDK §2.3: GET /iclock/cdata?SN=...&type=time must
+            // return an offset-aware local clock, not GET OPTION FROM.
+            // The old generic GET branch accidentally returned options
+            // and could leave devices displaying the container's UTC time.
+            if ($request->isMethod('GET')
+                && strcasecmp(trim((string) $request->query('type', '')), 'time') === 0) {
+                $response = 'Time='.$this->systemClockService->formatForPushTimeResponse()."\r\n";
+                $this->finishRawLog($rawLog, 'processed', 0, [
+                    'mode' => 'time_sync',
+                    'timezone' => $this->systemClockService->timezoneName(),
+                ]);
+                $this->logRequestHandled($context['endpoint'], $device, ['mode' => 'time_sync']);
+
+                return $response;
+            }
+
             if ($this->shouldRespondWithOptions($request, $context)) {
                 $response = $this->buildOptionsResponse($device);
                 $this->finishRawLog($rawLog, 'processed', 0, ['mode' => 'options'] + $context['metadata']);
@@ -1274,10 +1290,24 @@ class ZKTecoService
 
     private function resolveOptionTimezone(): string
     {
-        $configured = config('zkteco.option_timezone');
+        $configured = trim((string) config('zkteco.option_timezone', ''));
 
-        if ($configured !== null && trim((string) $configured) !== '') {
-            return trim((string) $configured);
+        if (preg_match('/^([+-])(\\d{1,2}):(\\d{2})$/', $configured, $parts)) {
+            $hours = (int) $parts[2];
+            $minutes = (int) $parts[3];
+
+            if ($hours <= 14 && $minutes < 60) {
+                return sprintf('%s%02d:%02d', $parts[1], $hours, $minutes);
+            }
+        }
+
+        // Backwards compatible with previously deployed TimeZone=4 setting.
+        // The ZKTeco PUSH protocol expects TimeZone=+04:00 instead of "4".
+        if (preg_match('/^([+-]?)(\\d{1,2})$/', $configured, $parts)) {
+            $hours = (int) $parts[2];
+            if ($hours <= 14) {
+                return sprintf('%s%02d:00', $parts[1] === '-' ? '-' : '+', $hours);
+            }
         }
 
         return $this->systemClockService->deviceTimezoneOption();
