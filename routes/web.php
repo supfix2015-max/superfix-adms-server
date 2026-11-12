@@ -20,6 +20,7 @@ Route::middleware(['auth', 'admin'])->prefix('admin')->name('admin.')->group(fun
     Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
     Route::get('/legacy', [LegacyAttendanceController::class, 'index'])->name('legacy.index');
     Route::get('/device-connectivity', [DeviceConnectionStatusController::class, 'index'])->name('device-connectivity.index');
+    Route::get('/connectivity', [DeviceConnectionStatusController::class, 'index'])->name('connectivity.index');
 
     Route::resource('devices', DeviceController::class);
     Route::post('devices/{device}/refresh-token', [DeviceController::class, 'refreshToken'])->name('devices.refresh-token');
