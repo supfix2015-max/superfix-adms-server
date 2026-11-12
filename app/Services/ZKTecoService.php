@@ -912,6 +912,9 @@ class ZKTecoService
                 'table' => 'ATTLOG',
                 'warnings' => $warnings,
                 'staging_backfill' => $stagingBackfill,
+                'original_write_mode' => $eligibleOriginalWriter
+                    ? 'approved_original_writer'
+                    : 'adms_staging_only',
                 'review_cutoff' => config('zkteco.attlog_backfill_review_before'),
             ],
             // ACK already-stored punches too, otherwise firmware may keep
