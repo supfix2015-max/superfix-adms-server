@@ -21,13 +21,15 @@ Route::get('/', function () {
 
 Route::middleware(['auth', 'admin'])->prefix('admin')->name('admin.')->group(function () {
     Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
-    // BioCloud-referenced admin workspace. All source directory reads are
-    // restricted to original SQL Server dbo tables; license flag lives in adms.
+    // Operations inspired by the legacy app run ONLY in the existing
+    // ADMS Enterprise design. Original dbo is read-only; device preferences
+    // are limited to the operational adms schema.
     Route::view('/biocloud', 'admin.legacy.home')->name('biocloud.home');
     Route::view('/biocloud/system', 'admin.legacy.system')->name('biocloud.system');
     Route::get('/directory/{section}', [LegacyDirectoryController::class, 'index'])
         ->name('directory.index');
-    Route::get('/fleet', [LegacyFleetController::class, 'index'])->name('fleet.index');
+    // Backward-compatible alias: there is one canonical device page.
+    Route::redirect('/fleet', '/admin/devices', 302)->name('fleet.index');
     Route::post('/fleet/{device}/license-requirement', [LegacyFleetController::class, 'updateLicenseRequirement'])
         ->name('fleet.license');
     Route::post('/fleet/{device}/cancel-pending', [LegacyFleetController::class, 'cancelPendingCommands'])
