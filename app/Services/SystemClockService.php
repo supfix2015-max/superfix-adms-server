@@ -34,26 +34,33 @@ class SystemClockService
      */
     public function encodeForPushCommand(): int
     {
-        $now = $this->now();
-        $year = (int) $now->format('Y');
-        $month = (int) $now->format('n');
-        $day = (int) $now->format('j');
-        $hour = (int) $now->format('G');
-        $minute = (int) $now->format('i');
-        $second = (int) $now->format('s');
-
-        return ((($year - 2000) * 12 * 31 + ($month - 1) * 31 + ($day - 1)) * 86400)
-            + (($hour * 60 + $minute) * 60) + $second;
+        // SET OPTIONS DateTime is generated for the configured device-local
+        // wall clock to preserve the original firmware behavior.
+        return $this->encodeOldTime($this->now());
     }
 
     /**
-     * Firmware-variant reply after SET OPTIONS DateTime command:
-     * DateTime=<OldEncodeTime>,ServerTZ=+0400
+     * The PUSH SDK rtdata time callback explicitly defines DateTime in GMT.
+     * ServerTZ separately specifies the local offset. Encoding local
+     * Asia/Dubai time here caused a repeatable four-hour clock drift.
      */
     public function formatForRealtimeTimeResponse(): string
     {
-        return 'DateTime='.$this->encodeForPushCommand()
+        return 'DateTime='.$this->encodeOldTime(CarbonImmutable::now('UTC'))
             .',ServerTZ='.$this->now()->format('O');
+    }
+
+    private function encodeOldTime(CarbonImmutable $time): int
+    {
+        $year = (int) $time->format('Y');
+        $month = (int) $time->format('n');
+        $day = (int) $time->format('j');
+        $hour = (int) $time->format('G');
+        $minute = (int) $time->format('i');
+        $second = (int) $time->format('s');
+
+        return ((($year - 2000) * 12 * 31 + ($month - 1) * 31 + ($day - 1)) * 86400)
+            + (($hour * 60 + $minute) * 60) + $second;
     }
 
     public function normalizeForDevice(mixed $value): string
