@@ -15,7 +15,10 @@
         <i class="bi bi-info-circle me-1"></i>
         <strong>Read-only monitoring.</strong>
         Original device registrations and locally provisioned test devices do not establish online status.
-        Online is counted only when the ADMS app recorded a heartbeat or request within the previous {{ $ttl }} minutes.
+        Recent connection means an ADMS request was recorded within {{ $ttl }} minutes.
+        @if (! config('zkteco.require_token', true))
+            The temporary HTTP legacy mode does NOT authenticate these connections; serial numbers can be spoofed.
+        @endif
         No devices, employees, fingerprints or commands are modified here.
     </div>
 
@@ -26,9 +29,9 @@
             <div class="small text-secondary">Att2000_V4.dbo.Device</div>
         </div></div></div>
         <div class="col-md-4"><div class="card h-100"><div class="card-body">
-            <div class="text-secondary small fw-semibold text-uppercase">Live verified by inbound ADMS</div>
+            <div class="text-secondary small fw-semibold text-uppercase">Recent ADMS requests</div>
             <div class="fs-2 fw-bold">{{ number_format($onlineCount) }}</div>
-            <div class="small text-secondary">Based on verified application last_seen, not historical status</div>
+            <div class="small text-secondary">Based on received last_seen; not historical status</div>
         </div></div></div>
         <div class="col-md-4"><div class="card h-100"><div class="card-body">
             <div class="text-secondary small fw-semibold text-uppercase">App-only test/other devices</div>
@@ -80,7 +83,7 @@
                             <td class="text-nowrap">{{ $device['last_contact'] ?: 'Never received by this application' }}</td>
                             <td>
                                 @if ($device['online'])
-                                    <span class="badge text-bg-success">Receiving now</span>
+                                    <span class="badge text-bg-success">{{ config('zkteco.require_token', true) ? 'Authenticated recent request' : 'Recent request (unverified)' }}</span>
                                 @elseif ($device['registered_in_app'])
                                     <span class="badge text-bg-warning">No recent contact</span>
                                 @else
