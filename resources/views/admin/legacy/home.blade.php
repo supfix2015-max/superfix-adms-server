@@ -1,5 +1,5 @@
-@extends('admin.layout_biocloud')
-@section('title','BioCloud · Home')
+@extends('admin.layout')
+@section('title','ADMS · Home')
 @section('page_title','Superfix Attendance Workspace')
 @section('content')
 <div class="row g-3">
