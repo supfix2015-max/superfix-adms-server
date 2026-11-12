@@ -83,7 +83,7 @@
             'id' => 'system', 'label' => 'System & Audit', 'icon' => 'bi-shield-check',
             'children' => [
                 ['label' => 'ADMS Request Logs', 'icon' => 'bi-journal-code', 'route' => route('admin.logs.index'), 'matches' => ['admin.logs.index']],
-                ['label' => 'Template Metadata', 'icon' => 'bi-fingerprint', 'route' => route('admin.legacy.index', ['tab' => 'templates']), 'matches' => ['admin.legacy.index'], 'tab' => 'templates']],
+                ['label' => 'Template Metadata', 'icon' => 'bi-fingerprint', 'route' => route('admin.legacy.index', ['tab' => 'templates']), 'matches' => ['admin.legacy.index'], 'tab' => 'templates'],
             ],
         ],
     ];
