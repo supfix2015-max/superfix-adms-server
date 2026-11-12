@@ -139,21 +139,25 @@ class ZKTecoService
             $this->attachRawLogDevice($rawLog, $device);
             $this->touchDevice($device, $request, $context);
 
-            // Narrow time-only exception for firmware that cannot attach
-            // per-device authentication to HTTP PUSH polls. No sensitive
-            // queue entries, biometrics, or other commands are exposed.
+            // Dedicated time-only response is independent from the normal
+            // command queue. It works for ALL explicitly eligible registered
+            // devices when opted in, even while ordinary command dispatch
+            // remains OFF. No biometric/reboot/admin command is exposed.
+            $clockOnly = $this->unverifiedLegacyClockCommand($device);
+            if ($clockOnly !== null) {
+                $this->finishRawLog($rawLog, 'processed', 1, [
+                    'mode' => 'legacy_time_only_sent',
+                    'command' => 'SET OPTIONS DateTime',
+                    'authenticated' => $this->hasAuthenticatedDeviceToken($request, $device),
+                ]);
+
+                return $clockOnly."\r\n";
+            }
+
+            // Ordinary commands and their replies still require a verified
+            // per-device token; serial-only HTTP access grants time only.
             if (config('zkteco.command_require_token', true)
                 && ! $this->hasAuthenticatedDeviceToken($request, $device)) {
-                $clockOnly = $this->unverifiedLegacyClockCommand($device);
-                if ($clockOnly !== null) {
-                    $this->finishRawLog($rawLog, 'processed', 1, [
-                        'mode' => 'legacy_time_only_sent',
-                        'command' => 'SET OPTIONS DateTime',
-                        'authenticated' => false,
-                    ]);
-
-                    return $clockOnly."\r\n";
-                }
                 $this->finishRawLog($rawLog, 'processed', 0, [
                     'command' => null, 'command_authorization' => 'required',
                 ]);
@@ -1075,14 +1079,49 @@ class ZKTecoService
 
     private function canUseLegacyTimeOnly(Device $device): bool
     {
-        return config('adms_pilot.enabled', false)
-            && config('zkteco.command_require_token', true)
-            && config('zkteco.legacy_time_only_enabled', false)
-            && in_array(
-                trim((string) ($device->serial_number ?: $device->sn)),
-                config('zkteco.legacy_time_only_serials', []),
-                true
+        if (! config('adms_pilot.enabled', false)
+            || ! config('zkteco.command_require_token', true)
+            || ! config('zkteco.legacy_time_only_enabled', false)
+            || ! $device->exists || $device->trashed()) {
+            return false;
+        }
+
+        $serial = trim((string) ($device->serial_number ?: $device->sn));
+        if ($serial === '') {
+            return false;
+        }
+
+        if (in_array($serial, config('zkteco.legacy_time_only_serials', []), true)) {
+            return true;
+        }
+
+        // No '*' wildcard: use the original, read-only registry, not all
+        // serial strings ever presented by a caller. Office UA300 is the
+        // single explicitly provisioned nonhistorical test terminal.
+        if (! config('zkteco.legacy_time_only_all_registered', false)) {
+            return false;
+        }
+
+        if ($serial === 'BZD5261200843') {
+            return true;
+        }
+
+        try {
+            return Cache::store('file')->remember(
+                'adms:clock-roster:'.hash('sha256', $serial),
+                300,
+                static fn (): bool => DB::connection('legacy_sqlsrv')
+                    ->table('dbo.Device')
+                    ->where('DeviceSerialNumber', $serial)
+                    ->exists()
             );
+        } catch (\Throwable $e) {
+            Log::warning('Clock sync roster lookup failed; denying time command', [
+                'serial' => $serial,
+                'exception_class' => get_class($e),
+            ]);
+            return false;
+        }
     }
 
     /**
