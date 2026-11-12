@@ -1,4 +1,4 @@
-@extends('admin.layout')
+@extends('admin.layout_biocloud')
 
 @section('title', 'BioCloud · Devices')
 @section('page_title', 'Devices')
