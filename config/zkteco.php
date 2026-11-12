@@ -79,6 +79,17 @@ return [
     'legacy_time_only_all_registered' => filter_var(env('ZKTECO_LEGACY_TIME_ONLY_ALL_REGISTERED', false), FILTER_VALIDATE_BOOLEAN),
     'legacy_time_only_serials' => array_values(array_filter(array_map('trim', explode(',', (string) env('ZKTECO_LEGACY_TIME_ONLY_SERIALS', ''))))),
     'legacy_time_only_interval_seconds' => max(60, (int) env('ZKTECO_LEGACY_TIME_ONLY_INTERVAL_SECONDS', 300)),
+    // Deliberate ONE-device retrospective ATTLOG query. Never a full fleet
+    // command, and never transmits template/user-delete/reboot commands.
+    'attlog_backfill_enabled' => filter_var(env('ZKTECO_ATTLOG_BACKFILL_ENABLED', false), FILTER_VALIDATE_BOOLEAN),
+    'attlog_backfill_serial' => trim((string) env('ZKTECO_ATTLOG_BACKFILL_SERIAL', '')),
+    'attlog_backfill_start' => trim((string) env('ZKTECO_ATTLOG_BACKFILL_START', '')),
+    'attlog_backfill_end' => trim((string) env('ZKTECO_ATTLOG_BACKFILL_END', '')),
+    // Keep historical punches from before the known device-clock repair
+    // in adms.attendance_logs for review instead of silently inserting
+    // shifted timestamps into dbo.Attendance.
+    'attlog_backfill_review_before' => trim((string) env('ZKTECO_ATTLOG_BACKFILL_REVIEW_BEFORE', '')),
+
 
     'auto_pull_employees_on_contact' => env('ZKTECO_AUTO_PULL_EMPLOYEES_ON_CONTACT', false),
     'auto_pull_employees_cooldown_minutes' => (int) env('ZKTECO_AUTO_PULL_EMPLOYEES_COOLDOWN_MINUTES', 15),
