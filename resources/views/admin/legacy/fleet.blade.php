@@ -124,6 +124,18 @@
                                                 <button class="dropdown-item" @disabled(! $dispatchEnabled)>Reboot</button>
                                             </form>
                                         </li>
+                                        <li><hr class="dropdown-divider"></li>
+                                        <li>
+                                            <form method="POST"
+                                                  action="{{ route('admin.fleet.cancel-pending', $row['id']) }}"
+                                                  onsubmit="return confirm('Cancel all UNSENT pending commands for {{ $row['serial'] }}? Sent commands cannot be recalled.')">
+                                                @csrf
+                                                <input type="hidden" name="confirmation" value="CANCEL-PENDING">
+                                                <button class="dropdown-item" type="submit">
+                                                    Clear Pending Command
+                                                </button>
+                                            </form>
+                                        </li>
                                         <li><a class="dropdown-item" href="{{ route('admin.commands.index') }}">
                                             Command status / pending history
                                         </a></li>
