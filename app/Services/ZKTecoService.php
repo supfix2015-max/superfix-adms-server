@@ -751,10 +751,10 @@ class ZKTecoService
             $backfillSerial = (string) config('zkteco.attlog_backfill_serial', '');
             if ($reviewBefore !== '' && $backfillSerial !== ''
                 && hash_equals($backfillSerial, (string) $device->serial_number)
-                && preg_match('/^\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}$/', $reviewBefore)) {
+                && preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', $reviewBefore)) {
                 $timezone = (string) config('legacy_attendance.attendance_wallclock_timezone', 'Asia/Dubai');
                 $sourceRecords = $preparedRecords->filter(static function (array $record) use ($reviewBefore, $timezone): bool {
-                    return \\Carbon\\CarbonImmutable::instance($record['log_time'])
+                    return \Carbon\CarbonImmutable::instance($record['log_time'])
                         ->setTimezone($timezone)->format('Y-m-d H:i:s') >= $reviewBefore;
                 })->values();
             }
@@ -1252,15 +1252,15 @@ class ZKTecoService
             $end = $this->systemClockService->formatForDevice();
         }
         foreach ([$start, $end] as $value) {
-            if (! preg_match('/^\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}$/', $value)) {
+            if (! preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', $value)) {
                 return null;
             }
             try {
-                $date = \\Carbon\\CarbonImmutable::createFromFormat('!Y-m-d H:i:s', $value, 'Asia/Dubai');
+                $date = \Carbon\CarbonImmutable::createFromFormat('!Y-m-d H:i:s', $value, 'Asia/Dubai');
                 if ($date === false || $date->format('Y-m-d H:i:s') !== $value) {
                     return null;
                 }
-            } catch (\\Throwable) {
+            } catch (\Throwable) {
                 return null;
             }
         }
@@ -1285,7 +1285,7 @@ class ZKTecoService
         $cache->put($key.':reply-id', $commandId, 14 * 86400);
 
         return 'C:'.$commandId.':DATA QUERY ATTLOG StartTime='
-            .$start."\\t".'EndTime='.$end;
+            .$start."\t".'EndTime='.$end;
     }
 
     private function acceptHistoricalAttendanceQueryReply(Device $device, array $context): bool
@@ -1597,7 +1597,7 @@ class ZKTecoService
     {
         $configured = trim((string) config('zkteco.option_timezone', ''));
 
-        if (preg_match('/^([+-])(\\d{1,2}):(\\d{2})$/', $configured, $parts)) {
+        if (preg_match('/^([+-])(\d{1,2}):(\d{2})$/', $configured, $parts)) {
             $hours = (int) $parts[2];
             $minutes = (int) $parts[3];
 
@@ -1608,7 +1608,7 @@ class ZKTecoService
 
         // Backwards compatible with previously deployed TimeZone=4 setting.
         // The ZKTeco PUSH protocol expects TimeZone=+04:00 instead of "4".
-        if (preg_match('/^([+-]?)(\\d{1,2})$/', $configured, $parts)) {
+        if (preg_match('/^([+-]?)(\d{1,2})$/', $configured, $parts)) {
             $hours = (int) $parts[2];
             if ($hours <= 14) {
                 return sprintf('%s%02d:00', $parts[1] === '-' ? '-' : '+', $hours);
