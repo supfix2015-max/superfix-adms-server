@@ -73,6 +73,10 @@ return [
     // Opt in to specific pilot serials. NEVER grants access to queued
     // biometric, reboot, deletion, enrollment or other commands.
     'legacy_time_only_enabled' => filter_var(env('ZKTECO_LEGACY_TIME_ONLY_ENABLED', false), FILTER_VALIDATE_BOOLEAN),
+    // Opt-in all existing original dbo.Device serials plus the registered
+    // office UA300, rather than a manually maintained comma-separated list.
+    // This is NOT a blanket authorization for unknown devices.
+    'legacy_time_only_all_registered' => filter_var(env('ZKTECO_LEGACY_TIME_ONLY_ALL_REGISTERED', false), FILTER_VALIDATE_BOOLEAN),
     'legacy_time_only_serials' => array_values(array_filter(array_map('trim', explode(',', (string) env('ZKTECO_LEGACY_TIME_ONLY_SERIALS', ''))))),
     'legacy_time_only_interval_seconds' => max(60, (int) env('ZKTECO_LEGACY_TIME_ONLY_INTERVAL_SECONDS', 300)),
 
