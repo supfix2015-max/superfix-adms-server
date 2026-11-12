@@ -559,6 +559,14 @@ class ZKTecoService
             'Encrypt='.(config('zkteco.option_encrypt') ? '1' : '0'),
         ];
 
+        // Optional PUSH firmware clock synchronization hint. The terminal
+        // may ignore this, so verify the actual device clock before relying
+        // on it; authenticated remote time commands remain separate.
+        $syncInterval = (int) config('zkteco.option_sync_time_seconds', 0);
+        if ($syncInterval > 0) {
+            $lines[] = 'SyncTime='.$syncInterval;
+        }
+
         return implode("\r\n", $lines)."\r\n";
     }
 
