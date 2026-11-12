@@ -1,26 +1,32 @@
-@extends('admin.layout_biocloud')
+@extends('admin.layout')
 
-@section('title', 'BioCloud · Devices')
-@section('page_title', 'Devices')
-@section('page_subtitle', 'Original device roster matched to live ADMS serial numbers. Operator license flags are saved in adms only.')
+@section('title', 'ADMS · Devices')
+@section('page_title', 'Device Fleet & Licenses')
+@section('page_subtitle', 'Manage registered ZKTeco terminals, license requirements, recent ADMS connectivity, and authorized commands from one workspace.')
+
+@section('page_actions')
+    <a class="btn btn-outline-primary" href="{{ route('admin.device-connectivity.index') }}"><i class="bi bi-broadcast-pin me-1"></i> Connection Status</a>
+    <a class="btn btn-outline-secondary" href="{{ route('admin.commands.index') }}"><i class="bi bi-terminal me-1"></i> Command Center</a>
+    <a class="btn btn-primary" href="{{ route('admin.devices.create') }}"><i class="bi bi-plus-lg me-1"></i> Register Device</a>
+@endsection
 
 @section('content')
 <style>
-.bc-fleet-toolbar{display:flex;gap:8px;flex-wrap:wrap;padding:12px 14px;background:#fff;border-bottom:1px solid #dee6e1}
+.bc-fleet-toolbar{display:flex;gap:8px;flex-wrap:wrap;padding:12px 14px;background:var(--bs-body-bg,#fff);border-bottom:1px solid #dee7f1}
 .bc-fleet-toolbar .btn{font-size:12px}
 .bc-fleet-table{font-size:12px;min-width:1160px;margin:0}
-.bc-fleet-table thead th{background:#303946;color:#fff;white-space:nowrap;font-weight:700;font-size:11px}
+.bc-fleet-table thead th{background:#f1f5fb;color:#334155;white-space:nowrap;font-weight:700;font-size:11px}
 .bc-fleet-table td{vertical-align:middle;padding:7px}
 .bc-license-toggle{display:flex;align-items:center;gap:7px;white-space:nowrap}
 .bc-license-toggle .form-check-input{margin:0;cursor:pointer}
 .bc-fleet-table .form-select{font-size:12px}
-.bc-state-live{background:#227f39;color:white;border-radius:3px;padding:4px 7px}
-.bc-state-off{background:#ddd;color:#303946;border-radius:3px;padding:4px 7px}
+.bc-state-live{background:#e0f8ec;color:#126746;border-radius:3px;padding:4px 7px}
+.bc-state-off{background:#eaf0f6;color:#394860;border-radius:3px;padding:4px 7px}
 </style>
 
 <div class="card p-0 overflow-hidden">
     <div class="bc-fleet-toolbar">
-        <form action="{{ route('admin.fleet.index') }}" method="GET" class="d-flex align-items-center gap-2 flex-wrap">
+        <form action="{{ route('admin.devices.index') }}" method="GET" class="d-flex align-items-center gap-2 flex-wrap">
             <input name="search" class="form-control form-control-sm" style="width:210px" placeholder="Serial / Device Alias"
                    value="{{ $filters['search'] ?? '' }}">
             <select name="connection" class="form-select form-select-sm" style="width:135px">
@@ -34,7 +40,7 @@
                 <option value="not_required" @selected(($filters['license'] ?? '') === 'not_required')>No license needed</option>
             </select>
             <button class="btn btn-success btn-sm" type="submit">Search</button>
-            <a class="btn btn-outline-secondary btn-sm" href="{{ route('admin.fleet.index') }}">Reset</a>
+            <a class="btn btn-outline-secondary btn-sm" href="{{ route('admin.devices.index') }}">Reset</a>
         </form>
         <a href="{{ route('admin.device-connectivity.index') }}" class="btn btn-outline-primary btn-sm ms-auto">
             <i class="bi bi-broadcast me-1"></i> Connection audit
@@ -211,7 +217,7 @@
     </div>
     <div class="d-flex justify-content-between align-items-center flex-wrap gap-3 p-3">
         <span class="text-muted small">
-            {{ $devices->total() }} devices · All matching uses exact serial number.
+            {{ $devices->total() }} devices · All matching uses exact serial number. Last contact does not prove device authentication.
             License checkbox is an operator flag only, not vendor activation.
         </span>
         {{ $devices->links('pagination::bootstrap-5') }}
