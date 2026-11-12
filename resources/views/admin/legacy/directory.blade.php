@@ -15,7 +15,7 @@
 
 @section('title', 'ADMS · '.$name)
 @section('page_title', $name)
-@section('page_subtitle', 'Original BioCloud data from Att2000_V4 SQL Server, read-only with existing reader permissions.')
+@section('page_subtitle', 'Original employee and organization data from Att2000_V4 SQL Server, with restricted read-only permissions.')
 
 @section('content')
 <style>
