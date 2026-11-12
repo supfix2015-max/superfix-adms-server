@@ -84,3 +84,17 @@ The UI shows **original dbo.Attendance only**, not quarantined staging punches. 
 ## Security
 
 The tokenless legacy Hili historic-query exception enables only \`DATA QUERY ATTLOG\`, not fingerprint exports, reboot, clear log, user-change or general queued commands. Public HTTP without device authentication still permits serial spoofing and attendance injection. Harden device ingress before scaling 22 original terminals, ideally via VPN/trusted network or firmware-supported authenticated TLS.
+
+
+## After retrieval: read-only exact and 4-hour offset reconciliation
+
+New command in V2, requires redeploy:
+
+```bash
+cd /var/www/html
+php artisan adms:audit-hili-backfill --serial=CEG9223661162 --from=2026-11-04 --to=2026-11-12
+```
+
+It compares each staged event (Asia/Dubai local wall clock) to official dbo.Attendance using exact badge, device serial, direction and time, with optional candidate matches at +4h and -4h. It also validates original dbo.Employee badges and reports staged duplicates or unrecognized statuses. Reports per day + examples. It uses SELECT only; will never import, adjust or rewrite the original records.
+
+At 2026-11-12 ~21:36, Hili staged count rose 15 -> 213; staged day counts Nov 4–12 = [25,25,14,25,26,26,26,26,20], original official count within Nov 4–12 = 90. Difference 213-90 DOES NOT equal missing event count. Wait for exact-match audit before any historical import, especially given known four-hour device-clock problem before Nov 12.
