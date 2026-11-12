@@ -17,7 +17,7 @@ cd /var/www/html
 php artisan config:clear
 php artisan adms:provision-legacy-devices --dry-run
 php artisan adms:provision-legacy-devices
-php artisan tinker --execute='dump(["app_devices"=>App\\Models\\Device::count(),"office"=>App\\Models\\Device::where("sn","BZD5261200843")->exists()]);'
+php artisan tinker --execute='dump(["app_devices"=>\App\Models\Device::count(),"office"=>\App\Models\Device::where("sn","BZD5261200843")->exists()]);'
 ```
 
 Creates only missing adms.devices rows for valid unique historical serials. Preserves office device and any existing API token, status, notes and last contact. Does NOT copy source employees, attendance or biometrics.
