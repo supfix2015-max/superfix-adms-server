@@ -45,7 +45,7 @@ class LegacyFleetController extends Controller
             $app = $bySerial->get($sn);
             $items[] = $this->deviceRow(
                 $sn,
-                (string) ($row->DeviceAliasName ?: ($row->DeviceName ?: 'Original device')),
+                (string) ($app?->name ?: ($row->DeviceAliasName ?: ($row->DeviceName ?: 'Original device'))),
                 $app,
                 true,
                 $row->DeviceIP,
