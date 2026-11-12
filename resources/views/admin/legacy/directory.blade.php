@@ -1,4 +1,4 @@
-@extends('admin.layout_biocloud')
+@extends('admin.layout')
 
 @php
     $titles = [
@@ -13,7 +13,7 @@
     $name = $titles[$section] ?? ucfirst($section);
 @endphp
 
-@section('title', 'BioCloud · '.$name)
+@section('title', 'ADMS · '.$name)
 @section('page_title', $name)
 @section('page_subtitle', 'Original BioCloud data from Att2000_V4 SQL Server, read-only with existing reader permissions.')
 
@@ -21,12 +21,12 @@
 <style>
 .bc-directory-actions{display:flex;gap:5px;padding:13px 14px 8px;background:white;flex-wrap:wrap}
 .bc-directory-actions .btn{font-size:12px;border-radius:3px}
-.bc-directory-filters{display:flex;gap:8px;flex-wrap:wrap;background:#b9dea1;padding:8px 12px}
+.bc-directory-filters{display:flex;gap:8px;flex-wrap:wrap;background:#f3f7fc;padding:8px 12px}
 .bc-directory-filters input,.bc-directory-filters select{flex:1;min-width:155px;font-size:13px}
 .bc-directory-grid{font-size:12px;min-width:680px}
-.bc-directory-grid thead th{background:#2c3542;color:#fff;font-size:11px;padding:8px;white-space:nowrap;border-right:1px solid #5f6b77}
+.bc-directory-grid thead th{background:#e9f0f9;color:#334155;font-size:11px;padding:8px;white-space:nowrap;border-right:1px solid #5f6b77}
 .bc-directory-grid tbody td{border-right:1px solid #eee}
-.bc-directory-grid tbody tr:hover td{background:#ecf7e7}
+.bc-directory-grid tbody tr:hover td{background:#f1f6fe}
 </style>
 <div class="card overflow-hidden p-0">
     <div class="bc-directory-actions">
