@@ -30,6 +30,8 @@ Route::middleware(['auth', 'admin'])->prefix('admin')->name('admin.')->group(fun
     Route::get('/fleet', [LegacyFleetController::class, 'index'])->name('fleet.index');
     Route::post('/fleet/{device}/license-requirement', [LegacyFleetController::class, 'updateLicenseRequirement'])
         ->name('fleet.license');
+    Route::post('/fleet/{device}/cancel-pending', [LegacyFleetController::class, 'cancelPendingCommands'])
+        ->name('fleet.cancel-pending');
     Route::get('/attendance-reports/{report}', [LegacyAttendanceReportController::class, 'show'])
         ->name('attendance-reports.show');
     Route::get('/legacy', [LegacyAttendanceController::class, 'index'])->name('legacy.index');
