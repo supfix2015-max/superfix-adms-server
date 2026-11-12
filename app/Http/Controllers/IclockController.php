@@ -17,6 +17,11 @@ class IclockController extends Controller
         return $this->respond(fn () => $this->zkTecoService->handleCdata($request));
     }
 
+    public function rtdata(Request $request): Response
+    {
+        return $this->respond(fn () => $this->zkTecoService->handleRealtimeData($request));
+    }
+
     public function getrequest(Request $request): Response
     {
         return $this->respond(fn () => $this->zkTecoService->handleGetRequest($request));
