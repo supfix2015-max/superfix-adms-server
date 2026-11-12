@@ -110,8 +110,8 @@
             </table>
         </div>
         <div class="d-flex justify-content-between gap-3 flex-wrap p-3">
-            <span class="small text-secondary">{{ $rows->count() }} rows on this page · Source dbo.{{ $table }}</span>
-            {{ $rows->links('pagination::simple-bootstrap-5') }}
+            <span class="small text-secondary">Total Records: <strong>{{ number_format($rows->total()) }}</strong> · {{ $rows->count() }} this page · Source dbo.{{ $table }}</span>
+            {{ $rows->links('pagination::bootstrap-5') }}
         </div>
     @endif
 </div>
