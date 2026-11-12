@@ -5,54 +5,120 @@
     $pageSubtitle = trim($__env->yieldContent('page_subtitle', 'Device connectivity and attendance management.'));
     $originalMode = config('legacy_attendance.browser_enabled', false);
 
-    // The existing ADMS Enterprise design is canonical. Every route appears
-    // in the left navigation, grouped by actual function. Reference screenshots
-    // from older BioCloud provide operational requirements, NOT visual branding.
+    // Operational capabilities from the former BioCloud are grouped
+    // inside the original ADMS Enterprise UI, never visually copied.
+    // All links correspond to actual authenticated routes. Specific actions
+    // require a selected device/employee on the destination page.
     $navGroups = [
-        'Overview' => [
-            ['route' => route('admin.dashboard'), 'match' => 'admin.dashboard', 'icon' => 'bi-grid-1x2-fill', 'label' => 'Dashboard'],
-            ['route' => route('admin.biocloud.system'), 'match' => 'admin.biocloud.system', 'icon' => 'bi-sliders', 'label' => 'System Status'],
+        [
+            'id' => 'overview', 'label' => 'Overview', 'icon' => 'bi-grid-1x2',
+            'children' => [
+                ['label' => 'Dashboard', 'icon' => 'bi-speedometer2', 'route' => route('admin.dashboard'), 'matches' => ['admin.dashboard']],
+                ['label' => 'System Status', 'icon' => 'bi-sliders', 'route' => route('admin.biocloud.system'), 'matches' => ['admin.biocloud.system']],
+            ],
         ],
-        'Employees & Organization' => [
-            ['route' => route('admin.directory.index', ['section' => 'employee']), 'match' => 'admin.directory.*', 'section' => 'employee', 'icon' => 'bi-people', 'label' => 'Employee Directory'],
-            ['route' => route('admin.directory.index', ['section' => 'department']), 'match' => 'admin.directory.*', 'section' => 'department', 'icon' => 'bi-diagram-3', 'label' => 'Departments'],
-            ['route' => route('admin.directory.index', ['section' => 'area']), 'match' => 'admin.directory.*', 'section' => 'area', 'icon' => 'bi-geo-alt', 'label' => 'Areas'],
-            ['route' => route('admin.directory.index', ['section' => 'position']), 'match' => 'admin.directory.*', 'section' => 'position', 'icon' => 'bi-briefcase', 'label' => 'Positions'],
-            ['route' => route('admin.directory.index', ['section' => 'holiday']), 'match' => 'admin.directory.*', 'section' => 'holiday', 'icon' => 'bi-calendar-event', 'label' => 'Holidays'],
-            ['route' => route('admin.directory.index', ['section' => 'timetable']), 'match' => 'admin.directory.*', 'section' => 'timetable', 'icon' => 'bi-clock-history', 'label' => 'Timetables'],
-            ['route' => route('admin.directory.index', ['section' => 'shift']), 'match' => 'admin.directory.*', 'section' => 'shift', 'icon' => 'bi-calendar-week', 'label' => 'Shifts'],
-            ['route' => route('admin.directory.index', ['section' => 'department-schedule']), 'match' => 'admin.directory.*', 'section' => 'department-schedule', 'icon' => 'bi-calendar-range', 'label' => 'Department Schedules'],
-            ['route' => route('admin.directory.index', ['section' => 'employee-schedule']), 'match' => 'admin.directory.*', 'section' => 'employee-schedule', 'icon' => 'bi-calendar2-week', 'label' => 'Employee Schedules'],
-            ['route' => route('admin.directory.index', ['section' => 'temporary-schedule']), 'match' => 'admin.directory.*', 'section' => 'temporary-schedule', 'icon' => 'bi-calendar-plus', 'label' => 'Temporary Schedules'],
-            ['route' => route('admin.directory.index', ['section' => 'employee-leave']), 'match' => 'admin.directory.*', 'section' => 'employee-leave', 'icon' => 'bi-person-dash', 'label' => 'Employee Leave'],
-            ['route' => route('admin.employees.index'), 'match' => 'admin.employees.*', 'icon' => 'bi-person-gear', 'label' => 'ADMS Employees'],
-            ['route' => route('admin.credentials.index'), 'match' => 'admin.credentials.index', 'icon' => 'bi-person-vcard', 'label' => 'Credentials & Enrolment'],
-            ['route' => route('admin.credentials.no-credential'), 'match' => 'admin.credentials.no-credential', 'icon' => 'bi-person-exclamation', 'label' => 'Missing Credentials'],
+        [
+            'id' => 'employees', 'label' => 'Employees & Organization', 'icon' => 'bi-people',
+            'children' => [
+                ['label' => 'Employee Management', 'icon' => 'bi-person-lines-fill', 'children' => [
+                    ['label' => 'Original Employee Directory', 'icon' => 'bi-person-vcard', 'route' => route('admin.directory.index', ['section' => 'employee']), 'matches' => ['admin.directory.index'], 'section' => 'employee'],
+                    ['label' => 'ADMS Employees', 'icon' => 'bi-person-gear', 'route' => route('admin.employees.index'), 'matches' => ['admin.employees.*']],
+                    ['label' => 'Original Employee Source', 'icon' => 'bi-database', 'route' => route('admin.legacy.index', ['tab' => 'employees']), 'matches' => ['admin.legacy.index'], 'tab' => 'employees'],
+                ]],
+                ['label' => 'Organizational Structure', 'icon' => 'bi-diagram-3', 'children' => [
+                    ['label' => 'Departments', 'icon' => 'bi-building', 'route' => route('admin.directory.index', ['section' => 'department']), 'matches' => ['admin.directory.index'], 'section' => 'department'],
+                    ['label' => 'Areas', 'icon' => 'bi-geo-alt', 'route' => route('admin.directory.index', ['section' => 'area']), 'matches' => ['admin.directory.index'], 'section' => 'area'],
+                    ['label' => 'Positions', 'icon' => 'bi-briefcase', 'route' => route('admin.directory.index', ['section' => 'position']), 'matches' => ['admin.directory.index'], 'section' => 'position'],
+                ]],
+                ['label' => 'Schedules & Leave', 'icon' => 'bi-calendar-week', 'children' => [
+                    ['label' => 'Holidays', 'icon' => 'bi-calendar-event', 'route' => route('admin.directory.index', ['section' => 'holiday']), 'matches' => ['admin.directory.index'], 'section' => 'holiday'],
+                    ['label' => 'Timetables', 'icon' => 'bi-clock-history', 'route' => route('admin.directory.index', ['section' => 'timetable']), 'matches' => ['admin.directory.index'], 'section' => 'timetable'],
+                    ['label' => 'Shifts', 'icon' => 'bi-clock', 'route' => route('admin.directory.index', ['section' => 'shift']), 'matches' => ['admin.directory.index'], 'section' => 'shift'],
+                    ['label' => 'Department Schedules', 'icon' => 'bi-calendar-range', 'route' => route('admin.directory.index', ['section' => 'department-schedule']), 'matches' => ['admin.directory.index'], 'section' => 'department-schedule'],
+                    ['label' => 'Employee Schedules', 'icon' => 'bi-calendar2-week', 'route' => route('admin.directory.index', ['section' => 'employee-schedule']), 'matches' => ['admin.directory.index'], 'section' => 'employee-schedule'],
+                    ['label' => 'Temporary Schedules', 'icon' => 'bi-calendar-plus', 'route' => route('admin.directory.index', ['section' => 'temporary-schedule']), 'matches' => ['admin.directory.index'], 'section' => 'temporary-schedule'],
+                    ['label' => 'Employee Leave', 'icon' => 'bi-person-dash', 'route' => route('admin.directory.index', ['section' => 'employee-leave']), 'matches' => ['admin.directory.index'], 'section' => 'employee-leave'],
+                ]],
+                ['label' => 'Credentials & Enrollment', 'icon' => 'bi-fingerprint', 'children' => [
+                    ['label' => 'Credentials', 'icon' => 'bi-person-vcard', 'route' => route('admin.credentials.index'), 'matches' => ['admin.credentials.index']],
+                    ['label' => 'Missing Credentials', 'icon' => 'bi-person-exclamation', 'route' => route('admin.credentials.no-credential'), 'matches' => ['admin.credentials.no-credential']],
+                ]],
+            ],
         ],
-        'Devices & Commands' => [
-            ['route' => route('admin.devices.index'), 'match' => 'admin.devices.index', 'icon' => 'bi-hdd-network', 'label' => 'Device Fleet & Licenses'],
-            ['route' => route('admin.device-connectivity.index'), 'match' => 'admin.device-connectivity.*', 'icon' => 'bi-broadcast-pin', 'label' => 'Device Connectivity'],
-            ['route' => route('admin.legacy.index', ['tab' => 'devices']), 'match' => 'admin.legacy.index', 'tab' => 'devices', 'icon' => 'bi-database', 'label' => 'Original Device Registry'],
-            ['route' => route('admin.devices.create'), 'match' => 'admin.devices.create', 'icon' => 'bi-plus-square', 'label' => 'Register Device'],
-            ['route' => route('admin.commands.index'), 'match' => 'admin.commands.index', 'icon' => 'bi-terminal', 'label' => 'Device Commands'],
-            ['route' => route('admin.commands.create'), 'match' => 'admin.commands.create', 'icon' => 'bi-send', 'label' => 'New Device Command'],
+        [
+            'id' => 'devices', 'label' => 'Devices & Commands', 'icon' => 'bi-hdd-network',
+            'children' => [
+                ['label' => 'Device Fleet', 'icon' => 'bi-hdd-stack', 'children' => [
+                    ['label' => 'Devices & License Flags', 'icon' => 'bi-hdd-network', 'route' => route('admin.devices.index'), 'matches' => ['admin.devices.index', 'admin.devices.show', 'admin.devices.edit']],
+                    ['label' => 'Device Connectivity', 'icon' => 'bi-broadcast', 'route' => route('admin.device-connectivity.index'), 'matches' => ['admin.device-connectivity.index']],
+                    ['label' => 'Original Device Registry', 'icon' => 'bi-database', 'route' => route('admin.legacy.index', ['tab' => 'devices']), 'matches' => ['admin.legacy.index'], 'tab' => 'devices'],
+                    ['label' => 'Register Device', 'icon' => 'bi-plus-square', 'route' => route('admin.devices.create'), 'matches' => ['admin.devices.create']],
+                ]],
+                ['label' => 'Device Operations', 'icon' => 'bi-terminal', 'children' => [
+                    ['label' => 'Command Center', 'icon' => 'bi-list-task', 'route' => route('admin.commands.index'), 'matches' => ['admin.commands.index', 'admin.commands.show']],
+                    ['label' => 'New Device Command', 'icon' => 'bi-send', 'route' => route('admin.commands.create'), 'matches' => ['admin.commands.create']],
+                    ['label' => 'Download / Sync Data', 'icon' => 'bi-arrow-down-up', 'route' => route('admin.devices.index'), 'matches' => [], 'hint' => 'Select device then Data Transfer'],
+                    ['label' => 'Clear Pending Commands', 'icon' => 'bi-x-octagon', 'route' => route('admin.devices.index'), 'matches' => [], 'hint' => 'Select device then Device Menu'],
+                ]],
+            ],
         ],
-        'Attendance & Reports' => [
-            ['route' => route('admin.legacy.index', ['tab' => 'attendance']), 'match' => 'admin.legacy.index', 'tab' => 'attendance', 'icon' => 'bi-list-check', 'label' => 'Attendance Transactions'],
-            ['route' => route('admin.attendance.index'), 'match' => 'admin.attendance.*', 'icon' => 'bi-activity', 'label' => 'Live Attendance'],
-            ['route' => route('admin.attendance-reports.show', ['report' => 'first-last']), 'match' => 'admin.attendance-reports.*', 'report' => 'first-last', 'icon' => 'bi-stopwatch', 'label' => 'First & Last'],
-            ['route' => route('admin.attendance-reports.show', ['report' => 'first-in-last-out']), 'match' => 'admin.attendance-reports.*', 'report' => 'first-in-last-out', 'icon' => 'bi-box-arrow-in-right', 'label' => 'First In / Last Out'],
-            ['route' => route('admin.attendance-reports.show', ['report' => 'multi-in-out']), 'match' => 'admin.attendance-reports.*', 'report' => 'multi-in-out', 'icon' => 'bi-arrow-left-right', 'label' => 'Multi In / Out'],
-            ['route' => route('admin.attendance-reports.show', ['report' => 'daily']), 'match' => 'admin.attendance-reports.*', 'report' => 'daily', 'icon' => 'bi-calendar-day', 'label' => 'Daily Attendance'],
-            ['route' => route('admin.attendance-reports.show', ['report' => 'monthly']), 'match' => 'admin.attendance-reports.*', 'report' => 'monthly', 'icon' => 'bi-calendar-month', 'label' => 'Monthly Attendance'],
-            ['route' => route('admin.attendance-reports.show', ['report' => 'summary']), 'match' => 'admin.attendance-reports.*', 'report' => 'summary', 'icon' => 'bi-clipboard-data', 'label' => 'Attendance Summary'],
+        [
+            'id' => 'attendance', 'label' => 'Attendance & Reports', 'icon' => 'bi-calendar2-check',
+            'children' => [
+                ['label' => 'Attendance', 'icon' => 'bi-clipboard-check', 'children' => [
+                    ['label' => 'Transactions', 'icon' => 'bi-list-check', 'route' => route('admin.legacy.index', ['tab' => 'attendance']), 'matches' => ['admin.legacy.index'], 'tab' => 'attendance'],
+                    ['label' => 'Live Attendance', 'icon' => 'bi-activity', 'route' => route('admin.attendance.index'), 'matches' => ['admin.attendance.index']],
+                ]],
+                ['label' => 'Attendance Reports', 'icon' => 'bi-bar-chart', 'children' => [
+                    ['label' => 'First & Last', 'icon' => 'bi-stopwatch', 'route' => route('admin.attendance-reports.show', ['report' => 'first-last']), 'matches' => ['admin.attendance-reports.show'], 'report' => 'first-last'],
+                    ['label' => 'First In / Last Out', 'icon' => 'bi-box-arrow-in-right', 'route' => route('admin.attendance-reports.show', ['report' => 'first-in-last-out']), 'matches' => ['admin.attendance-reports.show'], 'report' => 'first-in-last-out'],
+                    ['label' => 'Multi In / Out', 'icon' => 'bi-arrow-left-right', 'route' => route('admin.attendance-reports.show', ['report' => 'multi-in-out']), 'matches' => ['admin.attendance-reports.show'], 'report' => 'multi-in-out'],
+                    ['label' => 'Daily Attendance', 'icon' => 'bi-calendar-day', 'route' => route('admin.attendance-reports.show', ['report' => 'daily']), 'matches' => ['admin.attendance-reports.show'], 'report' => 'daily'],
+                    ['label' => 'Monthly Attendance', 'icon' => 'bi-calendar-month', 'route' => route('admin.attendance-reports.show', ['report' => 'monthly']), 'matches' => ['admin.attendance-reports.show'], 'report' => 'monthly'],
+                    ['label' => 'Attendance Summary', 'icon' => 'bi-clipboard-data', 'route' => route('admin.attendance-reports.show', ['report' => 'summary']), 'matches' => ['admin.attendance-reports.show'], 'report' => 'summary'],
+                ]],
+            ],
         ],
-        'System & Audit' => [
-            ['route' => route('admin.logs.index'), 'match' => 'admin.logs.*', 'icon' => 'bi-journal-code', 'label' => 'ADMS Request Logs'],
-            ['route' => route('admin.legacy.index', ['tab' => 'templates']), 'match' => 'admin.legacy.index', 'tab' => 'templates', 'icon' => 'bi-fingerprint', 'label' => 'Template Metadata'],
-            ['route' => route('admin.legacy.index', ['tab' => 'employees']), 'match' => 'admin.legacy.index', 'tab' => 'employees', 'icon' => 'bi-table', 'label' => 'Original Employee Source'],
+        [
+            'id' => 'system', 'label' => 'System & Audit', 'icon' => 'bi-shield-check',
+            'children' => [
+                ['label' => 'ADMS Request Logs', 'icon' => 'bi-journal-code', 'route' => route('admin.logs.index'), 'matches' => ['admin.logs.index']],
+                ['label' => 'Template Metadata', 'icon' => 'bi-fingerprint', 'route' => route('admin.legacy.index', ['tab' => 'templates']), 'matches' => ['admin.legacy.index'], 'tab' => 'templates']],
+            ],
         ],
     ];
+
+    $isActiveNavLeaf = static function (array $item): bool {
+        if (empty($item['matches']) || ! request()->routeIs(...$item['matches'])) {
+            return false;
+        }
+
+        foreach (['tab', 'section', 'report'] as $context) {
+            if (! array_key_exists($context, $item)) {
+                continue;
+            }
+            $actual = $context === 'tab' ? request()->query('tab', 'employees') : request()->route($context);
+            if ((string) $actual !== (string) $item[$context]) {
+                return false;
+            }
+        }
+
+        return true;
+    };
+
+    $hasActiveNav = static function (array $node) use (&$hasActiveNav, $isActiveNavLeaf): bool {
+        if (! empty($node['children'])) {
+            foreach ($node['children'] as $child) {
+                if ($hasActiveNav($child)) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        return $isActiveNavLeaf($node);
+    };
 @endphp
 <head>
     <meta charset="UTF-8">
@@ -83,21 +149,49 @@
                     </div>
                 </div>
 
-                <nav class="sidebar-nav" aria-label="All ADMS Enterprise pages">
-                    @foreach ($navGroups as $group => $items)
-                        <div class="sidebar-section-label">{{ $group }}</div>
-                        @foreach ($items as $item)
-                            @php
-                                $active = request()->routeIs($item['match'])
-                                    && (!isset($item['tab']) || request('tab', 'employees') === $item['tab'])
-                                    && (!isset($item['section']) || request()->route('section') === $item['section'])
-                                    && (!isset($item['report']) || request()->route('report') === $item['report']);
-                            @endphp
-                            <a href="{{ $item['route'] }}" class="nav-link {{ $active ? 'active' : '' }}">
-                                <i class="bi {{ $item['icon'] }}"></i>
-                                <span>{{ $item['label'] }}</span>
-                            </a>
-                        @endforeach
+                <nav class="sidebar-nav sidebar-accordion" aria-label="ADMS Enterprise navigation">
+                    @foreach ($navGroups as $group)
+                        @php($groupActive = $hasActiveNav($group))
+                        <details class="sidebar-group" data-nav-group="{{ $group['id'] }}" @if($groupActive) open @endif>
+                            <summary class="sidebar-group-toggle {{ $groupActive ? 'is-current' : '' }}">
+                                <i class="bi {{ $group['icon'] }}" aria-hidden="true"></i>
+                                <span>{{ $group['label'] }}</span>
+                                <i class="bi bi-chevron-down sidebar-chevron" aria-hidden="true"></i>
+                            </summary>
+                            <div class="sidebar-group-contents">
+                                @foreach ($group['children'] as $item)
+                                    @if (! empty($item['children']))
+                                        @php($subActive = $hasActiveNav($item))
+                                        <details class="sidebar-subgroup" data-nav-subgroup="{{ $group['id'] }}-{{ $loop->index }}" @if($subActive) open @endif>
+                                            <summary class="sidebar-subgroup-toggle {{ $subActive ? 'is-current' : '' }}">
+                                                <i class="bi {{ $item['icon'] }}" aria-hidden="true"></i>
+                                                <span>{{ $item['label'] }}</span>
+                                                <i class="bi bi-chevron-down sidebar-chevron" aria-hidden="true"></i>
+                                            </summary>
+                                            <div class="sidebar-subgroup-contents">
+                                                @foreach ($item['children'] as $action)
+                                                    @php($active = $isActiveNavLeaf($action))
+                                                    <a href="{{ $action['route'] }}"
+                                                       class="nav-link sidebar-subitem {{ $active ? 'active' : '' }}"
+                                                       @if(isset($action['hint'])) title="{{ $action['hint'] }}" @endif
+                                                       @if($active) aria-current="page" @endif>
+                                                        <i class="bi {{ $action['icon'] }}" aria-hidden="true"></i>
+                                                        <span>{{ $action['label'] }}</span>
+                                                    </a>
+                                                @endforeach
+                                            </div>
+                                        </details>
+                                    @else
+                                        @php($active = $isActiveNavLeaf($item))
+                                        <a href="{{ $item['route'] }}" class="nav-link sidebar-subitem {{ $active ? 'active' : '' }}"
+                                           @if($active) aria-current="page" @endif>
+                                            <i class="bi {{ $item['icon'] }}" aria-hidden="true"></i>
+                                            <span>{{ $item['label'] }}</span>
+                                        </a>
+                                    @endif
+                                @endforeach
+                            </div>
+                        </details>
                     @endforeach
                 </nav>
 
@@ -229,6 +323,24 @@
                 if (window.innerWidth > 991) {
                     body.classList.remove('sidebar-open');
                 }
+            });
+
+            // Nested native details provide keyboard + screenreader behavior.
+            // Keep only ONE top-level section open; opening a nested section
+            // closes its siblings. Active-route sections are open on page load.
+            const sidebar = document.getElementById('adminSidebar');
+            const rootGroups = [...sidebar.querySelectorAll('.sidebar-group')];
+            rootGroups.forEach(group => group.addEventListener('toggle', () => {
+                if (group.open) {
+                    rootGroups.filter(other => other !== group).forEach(other => { other.open = false; });
+                }
+            }));
+            sidebar.querySelectorAll('.sidebar-subgroup').forEach(section => {
+                section.addEventListener('toggle', () => {
+                    if (!section.open) return;
+                    const others = section.parentElement.querySelectorAll('.sidebar-subgroup');
+                    others.forEach(other => { if (other !== section) other.open = false; });
+                });
             });
         })();
     </script>
