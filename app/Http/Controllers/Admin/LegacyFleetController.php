@@ -91,6 +91,7 @@ class LegacyFleetController extends Controller
         );
 
         return view('admin.legacy.fleet', [
+            'licenseColumnReady' => $this->licenseColumnReady(),
             'devices' => $devices,
             'filters' => $filters,
             'dispatchEnabled' => (bool) config('zkteco.dispatch_commands', false)
@@ -102,6 +103,12 @@ class LegacyFleetController extends Controller
     public function updateLicenseRequirement(Request $request, Device $device): RedirectResponse
     {
         abort_unless(config('legacy_attendance.browser_enabled', false), 404);
+        if (! $this->licenseColumnReady()) {
+            return back()->withErrors([
+                'requires_license' => 'License tracking requires the one-time SQL Server DBA schema update: docs/sql/adms-devices-requires-license.sql. Other fleet functions remain available.',
+            ]);
+        }
+
         $validated = $request->validate([
             'requires_license' => ['required', 'boolean'],
         ]);
@@ -138,6 +145,19 @@ class LegacyFleetController extends Controller
             '%d unsent commands cancelled for %s; already dispatched commands were not changed.',
             $cancelled, $device->serial_number
         ));
+    }
+
+    private function licenseColumnReady(): bool
+    {
+        try {
+            $row = DB::connection('sqlsrv')->selectOne(
+                "SELECT COL_LENGTH(N'adms.devices', N'requires_license') AS flag_length"
+            );
+
+            return $row !== null && $row->flag_length !== null;
+        } catch (\Throwable) {
+            return false;
+        }
     }
 
     private function deviceRow(
