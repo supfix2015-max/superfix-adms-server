@@ -2,27 +2,56 @@
 <html lang="en">
 @php
     $pageTitle = trim($__env->yieldContent('page_title', 'Dashboard'));
-    $pageSubtitle = trim($__env->yieldContent('page_subtitle', 'Operational visibility for devices, biometric enrollment, and attendance workflows.'));
+    $pageSubtitle = trim($__env->yieldContent('page_subtitle', 'Device connectivity and attendance management.'));
     $originalMode = config('legacy_attendance.browser_enabled', false);
-    $navItems = $originalMode ? [
-        ['route' => route('admin.biocloud.home'), 'match' => 'admin.biocloud.*', 'icon' => 'bi-house', 'label' => 'BioCloud Workspace'],
-        ['route' => route('admin.fleet.index'), 'match' => 'admin.fleet.*', 'icon' => 'bi-hdd-network', 'label' => 'Device Fleet & Licenses'],
-        ['route' => route('admin.dashboard'), 'match' => 'admin.dashboard', 'icon' => 'bi-grid-1x2-fill', 'label' => 'Dashboard'],
-        ['route' => route('admin.legacy.index', ['tab' => 'devices']), 'match' => 'admin.legacy.*', 'tab' => 'devices', 'icon' => 'bi-hdd-network-fill', 'label' => 'Devices (SQL)'],
-        ['route' => route('admin.device-connectivity.index'), 'match' => 'admin.device-connectivity.*', 'icon' => 'bi-broadcast-pin', 'label' => 'Devices • Live Status'],
-        ['route' => route('admin.legacy.index', ['tab' => 'employees']), 'match' => 'admin.legacy.*', 'tab' => 'employees', 'icon' => 'bi-people-fill', 'label' => 'Employees (SQL)'],
-        ['route' => route('admin.legacy.index', ['tab' => 'templates']), 'match' => 'admin.legacy.*', 'tab' => 'templates', 'icon' => 'bi-person-vcard-fill', 'label' => 'Template metadata'],
-        ['route' => route('admin.legacy.index', ['tab' => 'attendance']), 'match' => 'admin.legacy.*', 'tab' => 'attendance', 'icon' => 'bi-calendar2-check-fill', 'label' => 'Attendance (SQL)'],
-        ['route' => route('admin.commands.index'), 'match' => 'admin.commands.*', 'icon' => 'bi-terminal-fill', 'label' => 'Command Center'],
-        ['route' => route('admin.logs.index'), 'match' => 'admin.logs.*', 'icon' => 'bi-journal-code', 'label' => 'ADMS Request Logs'],
-    ] : [
-        ['route' => route('admin.dashboard'), 'match' => 'admin.dashboard', 'icon' => 'bi-grid-1x2-fill', 'label' => 'Dashboard'],
-        ['route' => route('admin.devices.index'), 'match' => 'admin.devices.*', 'icon' => 'bi-hdd-network-fill', 'label' => 'Devices'],
-        ['route' => route('admin.employees.index'), 'match' => 'admin.employees.*', 'icon' => 'bi-people-fill', 'label' => 'Employees'],
-        ['route' => route('admin.credentials.index'), 'match' => 'admin.credentials.*', 'icon' => 'bi-person-vcard-fill', 'label' => 'Credentials'],
-        ['route' => route('admin.attendance.index'), 'match' => 'admin.attendance.*', 'icon' => 'bi-calendar2-check-fill', 'label' => 'Attendance'],
-        ['route' => route('admin.commands.index'), 'match' => 'admin.commands.*', 'icon' => 'bi-terminal-fill', 'label' => 'Commands'],
-        ['route' => route('admin.logs.index'), 'match' => 'admin.logs.*', 'icon' => 'bi-journal-code', 'label' => 'Logs'],
+
+    // The existing ADMS Enterprise design is canonical. Every route appears
+    // in the left navigation, grouped by actual function. Reference screenshots
+    // from older BioCloud provide operational requirements, NOT visual branding.
+    $navGroups = [
+        'Overview' => [
+            ['route' => route('admin.dashboard'), 'match' => 'admin.dashboard', 'icon' => 'bi-grid-1x2-fill', 'label' => 'Dashboard'],
+            ['route' => route('admin.biocloud.system'), 'match' => 'admin.biocloud.system', 'icon' => 'bi-sliders', 'label' => 'System Status'],
+        ],
+        'Employees & Organization' => [
+            ['route' => route('admin.directory.index', ['section' => 'employee']), 'match' => 'admin.directory.*', 'section' => 'employee', 'icon' => 'bi-people', 'label' => 'Employee Directory'],
+            ['route' => route('admin.directory.index', ['section' => 'department']), 'match' => 'admin.directory.*', 'section' => 'department', 'icon' => 'bi-diagram-3', 'label' => 'Departments'],
+            ['route' => route('admin.directory.index', ['section' => 'area']), 'match' => 'admin.directory.*', 'section' => 'area', 'icon' => 'bi-geo-alt', 'label' => 'Areas'],
+            ['route' => route('admin.directory.index', ['section' => 'position']), 'match' => 'admin.directory.*', 'section' => 'position', 'icon' => 'bi-briefcase', 'label' => 'Positions'],
+            ['route' => route('admin.directory.index', ['section' => 'holiday']), 'match' => 'admin.directory.*', 'section' => 'holiday', 'icon' => 'bi-calendar-event', 'label' => 'Holidays'],
+            ['route' => route('admin.directory.index', ['section' => 'timetable']), 'match' => 'admin.directory.*', 'section' => 'timetable', 'icon' => 'bi-clock-history', 'label' => 'Timetables'],
+            ['route' => route('admin.directory.index', ['section' => 'shift']), 'match' => 'admin.directory.*', 'section' => 'shift', 'icon' => 'bi-calendar-week', 'label' => 'Shifts'],
+            ['route' => route('admin.directory.index', ['section' => 'department-schedule']), 'match' => 'admin.directory.*', 'section' => 'department-schedule', 'icon' => 'bi-calendar-range', 'label' => 'Department Schedules'],
+            ['route' => route('admin.directory.index', ['section' => 'employee-schedule']), 'match' => 'admin.directory.*', 'section' => 'employee-schedule', 'icon' => 'bi-calendar2-week', 'label' => 'Employee Schedules'],
+            ['route' => route('admin.directory.index', ['section' => 'temporary-schedule']), 'match' => 'admin.directory.*', 'section' => 'temporary-schedule', 'icon' => 'bi-calendar-plus', 'label' => 'Temporary Schedules'],
+            ['route' => route('admin.directory.index', ['section' => 'employee-leave']), 'match' => 'admin.directory.*', 'section' => 'employee-leave', 'icon' => 'bi-person-dash', 'label' => 'Employee Leave'],
+            ['route' => route('admin.employees.index'), 'match' => 'admin.employees.*', 'icon' => 'bi-person-gear', 'label' => 'ADMS Employees'],
+            ['route' => route('admin.credentials.index'), 'match' => 'admin.credentials.*', 'icon' => 'bi-person-vcard', 'label' => 'Credentials & Enrolment'],
+            ['route' => route('admin.credentials.no-credential'), 'match' => 'admin.credentials.no-credential', 'icon' => 'bi-person-exclamation', 'label' => 'Missing Credentials'],
+        ],
+        'Devices & Commands' => [
+            ['route' => route('admin.devices.index'), 'match' => 'admin.devices.*', 'icon' => 'bi-hdd-network', 'label' => 'Device Fleet & Licenses'],
+            ['route' => route('admin.device-connectivity.index'), 'match' => 'admin.device-connectivity.*', 'icon' => 'bi-broadcast-pin', 'label' => 'Device Connectivity'],
+            ['route' => route('admin.legacy.index', ['tab' => 'devices']), 'match' => 'admin.legacy.index', 'tab' => 'devices', 'icon' => 'bi-database', 'label' => 'Original Device Registry'],
+            ['route' => route('admin.devices.create'), 'match' => 'admin.devices.create', 'icon' => 'bi-plus-square', 'label' => 'Register Device'],
+            ['route' => route('admin.commands.index'), 'match' => 'admin.commands.*', 'icon' => 'bi-terminal', 'label' => 'Device Commands'],
+            ['route' => route('admin.commands.create'), 'match' => 'admin.commands.create', 'icon' => 'bi-send', 'label' => 'New Device Command'],
+        ],
+        'Attendance & Reports' => [
+            ['route' => route('admin.legacy.index', ['tab' => 'attendance']), 'match' => 'admin.legacy.index', 'tab' => 'attendance', 'icon' => 'bi-list-check', 'label' => 'Attendance Transactions'],
+            ['route' => route('admin.attendance.index'), 'match' => 'admin.attendance.*', 'icon' => 'bi-activity', 'label' => 'Live Attendance'],
+            ['route' => route('admin.attendance-reports.show', ['report' => 'first-last']), 'match' => 'admin.attendance-reports.*', 'report' => 'first-last', 'icon' => 'bi-stopwatch', 'label' => 'First & Last'],
+            ['route' => route('admin.attendance-reports.show', ['report' => 'first-in-last-out']), 'match' => 'admin.attendance-reports.*', 'report' => 'first-in-last-out', 'icon' => 'bi-box-arrow-in-right', 'label' => 'First In / Last Out'],
+            ['route' => route('admin.attendance-reports.show', ['report' => 'multi-in-out']), 'match' => 'admin.attendance-reports.*', 'report' => 'multi-in-out', 'icon' => 'bi-arrow-left-right', 'label' => 'Multi In / Out'],
+            ['route' => route('admin.attendance-reports.show', ['report' => 'daily']), 'match' => 'admin.attendance-reports.*', 'report' => 'daily', 'icon' => 'bi-calendar-day', 'label' => 'Daily Attendance'],
+            ['route' => route('admin.attendance-reports.show', ['report' => 'monthly']), 'match' => 'admin.attendance-reports.*', 'report' => 'monthly', 'icon' => 'bi-calendar-month', 'label' => 'Monthly Attendance'],
+            ['route' => route('admin.attendance-reports.show', ['report' => 'summary']), 'match' => 'admin.attendance-reports.*', 'report' => 'summary', 'icon' => 'bi-clipboard-data', 'label' => 'Attendance Summary'],
+        ],
+        'System & Audit' => [
+            ['route' => route('admin.logs.index'), 'match' => 'admin.logs.*', 'icon' => 'bi-journal-code', 'label' => 'ADMS Request Logs'],
+            ['route' => route('admin.legacy.index', ['tab' => 'templates']), 'match' => 'admin.legacy.index', 'tab' => 'templates', 'icon' => 'bi-fingerprint', 'label' => 'Template Metadata'],
+            ['route' => route('admin.legacy.index', ['tab' => 'employees']), 'match' => 'admin.legacy.index', 'tab' => 'employees', 'icon' => 'bi-table', 'label' => 'Original Employee Source'],
+        ],
     ];
 @endphp
 <head>
@@ -54,13 +83,21 @@
                     </div>
                 </div>
 
-                <div class="sidebar-section-label">Operations</div>
-                <nav class="sidebar-nav">
-                    @foreach ($navItems as $item)
-                        <a href="{{ $item['route'] }}" class="nav-link {{ request()->routeIs($item['match']) && (!isset($item['tab']) || request('tab', 'employees') === $item['tab']) ? 'active' : '' }}">
-                            <i class="bi {{ $item['icon'] }}"></i>
-                            <span>{{ $item['label'] }}</span>
-                        </a>
+                <nav class="sidebar-nav" aria-label="All ADMS Enterprise pages">
+                    @foreach ($navGroups as $group => $items)
+                        <div class="sidebar-section-label">{{ $group }}</div>
+                        @foreach ($items as $item)
+                            @php
+                                $active = request()->routeIs($item['match'])
+                                    && (!isset($item['tab']) || request('tab', 'employees') === $item['tab'])
+                                    && (!isset($item['section']) || request()->route('section') === $item['section'])
+                                    && (!isset($item['report']) || request()->route('report') === $item['report']);
+                            @endphp
+                            <a href="{{ $item['route'] }}" class="nav-link {{ $active ? 'active' : '' }}">
+                                <i class="bi {{ $item['icon'] }}"></i>
+                                <span>{{ $item['label'] }}</span>
+                            </a>
+                        @endforeach
                     @endforeach
                 </nav>
 
@@ -68,7 +105,7 @@
                     <strong>Workspace Status</strong>
                     <div class="small">
                         @if ($originalMode)
-                            Historical records are shown directly from SQL Server. Live commands and device integration remain in pilot mode.
+                            Source: Att2000_V4.dbo · operations: Att2000_V4.adms. Device commands require authenticated dispatch; attendance reception continues independently.
                         @else
                             Remote device management and attendance workflows are available from this console.
                         @endif
