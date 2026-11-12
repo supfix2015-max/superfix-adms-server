@@ -13,14 +13,6 @@ return new class extends Migration
             ->where('status', 'executed')
             ->update(['status' => 'done']);
 
-        $driver = DB::getDriverName();
-
-        if ($driver === 'mysql') {
-            DB::statement('ALTER TABLE device_commands MODIFY command VARCHAR(255) NOT NULL');
-            DB::statement("ALTER TABLE device_commands MODIFY status VARCHAR(32) NOT NULL DEFAULT 'pending'");
-            DB::statement('ALTER TABLE device_commands MODIFY response TEXT NULL');
-        }
-
         Schema::table('device_commands', function (Blueprint $table): void {
             $table->index(['device_id', 'status', 'sent_at'], 'device_commands_dispatch_index');
         });
@@ -67,14 +59,6 @@ return new class extends Migration
         Schema::table('raw_logs', function (Blueprint $table): void {
             $table->dropIndex('raw_logs_endpoint_status_index');
         });
-
-        $driver = DB::getDriverName();
-
-        if ($driver === 'mysql') {
-            DB::statement("ALTER TABLE device_commands MODIFY command ENUM('RESTART','CLEAR_LOGS','SET_TIME','UPDATE_TIME','ENABLE_ATTENDANCE','DISABLE_ATTENDANCE','SET_ATTENDANCE_MODE','SYNC_EMPLOYEES') NOT NULL");
-            DB::statement("ALTER TABLE device_commands MODIFY status ENUM('pending','sent','executed','failed') NOT NULL DEFAULT 'pending'");
-            DB::statement('ALTER TABLE device_commands MODIFY response VARCHAR(255) NULL');
-        }
 
         DB::table('device_commands')
             ->where('status', 'done')
