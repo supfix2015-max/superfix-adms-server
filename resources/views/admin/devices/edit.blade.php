@@ -1,4 +1,4 @@
-@extends(config('legacy_attendance.browser_enabled', false) ? 'admin.layout_biocloud' : 'admin.layout')
+@extends('admin.layout')
 
 @section('title', 'Edit Device')
 @section('page_title', 'Edit Device Profile')
