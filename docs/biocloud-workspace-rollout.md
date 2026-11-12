@@ -90,3 +90,24 @@ SELECT DB_NAME() AS db_name, SCHEMA_NAME() AS default_schema,
 - After: `php artisan migrate:status`, `php artisan optimize:clear`, `php artisan view:cache`, `php artisan adms:biocloud-ui-check` and verify the checkbox saves at `/admin/devices`.
 
 No change to Hili historical data, live writer allowlist or hourly device time synchronization.
+
+
+## Sidebar redesign: two-level professional dropdown menus
+
+ADMS Enterprise keeps its original navy/neutral brand; old BioCloud screenshots were operational references ONLY. The sidebar now uses an accessible two-level collapsible navigation instead of 33 always-expanded links.
+
+- Overview: Dashboard, System Status.
+- Employees & Organization: Employee Management (Original Employee Directory, ADMS Employees, source); Organizational Structure (Departments, Areas, Positions); Schedules & Leave (Holidays, Timetables, Shifts, all Schedules, Employee Leave); Credentials & Enrollment (Credentials, Missing Credentials).
+- Devices & Commands: Device Fleet (Devices & License Flags, Connectivity, Original Registry, Register Device); Device Operations (Command Center, New Command, Download / Sync Data, Clear Pending Commands). Device-specific operations require selecting a device and confirming.
+- Attendance & Reports: Attendance (Transactions, Live), Attendance Reports (First & Last, First In/Last Out, Multi In/Out, Daily, Monthly, Summary).
+- System & Audit: ADMS Request Logs, Template Metadata.
+
+Native HTML details/summary maintains screenreader and keyboard behavior, active pages expand their parents automatically, other groups can be collapsed, chevrons show expansion status, focus styles are visible, and the existing mobile sidebar remains.
+
+## User-confirmed licensing blocker
+
+Current live read-only check: Att2000_V4.adms database + adms.devices table visible, but requires_license COLUMN MISSING and application login has **NO ALTER permission** on adms.devices. Repeating the targeted Laravel migration from the unprivileged app terminal will fail until the DBA has added this column. This is intentional least privilege.
+
+An authorized SQL Server admin must execute the narrowly scoped, idempotent docs/sql/adms-devices-requires-license.sql script against Att2000_V4 ONLY. Do not grant dbo, db_owner or ALTER to long-running ADMS login. Then rerun the targeted Laravel migration (which sees column already present and marks it Ran with no DDL). Clear view/config cache and run php artisan adms:biocloud-ui-check; check Enterprise sidebar navigation = OK and Edit License checkbox column = OK.
+
+Until DBA step completes, the checkbox is visible but save is disabled with a clear banner. Other fleet page operations and existing Hili live attendance and automatic hourly clock sync remain unchanged.
