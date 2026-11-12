@@ -111,3 +111,22 @@ Current live read-only check: Att2000_V4.adms database + adms.devices table visi
 An authorized SQL Server admin must execute the narrowly scoped, idempotent docs/sql/adms-devices-requires-license.sql script against Att2000_V4 ONLY. Do not grant dbo, db_owner or ALTER to long-running ADMS login. Then rerun the targeted Laravel migration (which sees column already present and marks it Ran with no DDL). Clear view/config cache and run php artisan adms:biocloud-ui-check; check Enterprise sidebar navigation = OK and Edit License checkbox column = OK.
 
 Until DBA step completes, the checkbox is visible but save is disabled with a clear banner. Other fleet page operations and existing Hili live attendance and automatic hourly clock sync remain unchanged.
+
+## November 12: 500 after the nested navigation update — root cause and fix
+
+User's Laravel logs showed **ParseError: unexpected token ","** in compiled Blade file `storage/framework/views/c9025040...php:88`. The cause in feature-branch `resources/views/admin/layout.blade.php` was an extra closing `]` on the `System & Audit > Template Metadata` leaf; it prematurely closed `$navGroups` and broke PHP syntax. Removed in commit `4dfe0611683ef0362180ddeb0a8fa5b81017fbea`. Current bracket structure was statically verified.
+
+The readonly command `php artisan adms:biocloud-ui-check` now compiles critical templates with `Blade::compileString` and verifies syntax with `token_get_all($compiled, TOKEN_PARSE)`. Prior checks for routes/view existence alone were insufficient; `view:cache` can compile an invalid PHP expression without linting it. Expect six new `compiled PHP = OK · parsed` entries.
+
+A separate issue in the same logs: repeated `Device is not allowed for original SQL Server attendance writes` every ~6 seconds. The service previously invoked the original SQL writer for ALL accepted device ATTLOG whenever the Hili-only global write flag was ON. It now checks `LegacyAttendanceWriter::canWriteFor($device)` first. Unapproved serials which pass current ingestion validation stage accepted events to `adms.attendance_logs` and are ACKed after staging. Only approved original serials can attempt `dbo.Attendance`; the writer repeats the serial authorization. No all-registered permissions were enabled. It adds `original_write_mode` metadata.
+
+The error log did NOT disclose the rejected device's serial number; do not assume which terminal was retrying. Never broaden original writer permission or enable tokenless sensitive device commands to fix this.
+
+Deploy ONLY current feature branch V2; run:
+```bash
+cd /var/www/html
+php artisan optimize:clear
+php artisan view:cache
+php artisan adms:biocloud-ui-check
+```
+Then open /admin/devices. No new migration, SQL changes or system restart are required. Hili's hourly time synchronization and validated 213 historic punches are unaffected by these UI and receiver code changes.
