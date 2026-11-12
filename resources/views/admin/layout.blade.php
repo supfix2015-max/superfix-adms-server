@@ -11,8 +11,8 @@
         ['route' => route('admin.legacy.index', ['tab' => 'employees']), 'match' => 'admin.legacy.*', 'tab' => 'employees', 'icon' => 'bi-people-fill', 'label' => 'Employees (SQL)'],
         ['route' => route('admin.legacy.index', ['tab' => 'templates']), 'match' => 'admin.legacy.*', 'tab' => 'templates', 'icon' => 'bi-person-vcard-fill', 'label' => 'Template metadata'],
         ['route' => route('admin.legacy.index', ['tab' => 'attendance']), 'match' => 'admin.legacy.*', 'tab' => 'attendance', 'icon' => 'bi-calendar2-check-fill', 'label' => 'Attendance (SQL)'],
-        ['route' => route('admin.commands.index'), 'match' => 'admin.commands.*', 'icon' => 'bi-terminal-fill', 'label' => 'Pilot Commands'],
-        ['route' => route('admin.logs.index'), 'match' => 'admin.logs.*', 'icon' => 'bi-journal-code', 'label' => 'Pilot Logs'],
+        ['route' => route('admin.commands.index'), 'match' => 'admin.commands.*', 'icon' => 'bi-terminal-fill', 'label' => 'Command Center'],
+        ['route' => route('admin.logs.index'), 'match' => 'admin.logs.*', 'icon' => 'bi-journal-code', 'label' => 'ADMS Request Logs'],
     ] : [
         ['route' => route('admin.dashboard'), 'match' => 'admin.dashboard', 'icon' => 'bi-grid-1x2-fill', 'label' => 'Dashboard'],
         ['route' => route('admin.devices.index'), 'match' => 'admin.devices.*', 'icon' => 'bi-hdd-network-fill', 'label' => 'Devices'],
