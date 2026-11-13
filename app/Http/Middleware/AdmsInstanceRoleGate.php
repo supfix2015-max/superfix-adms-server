@@ -31,6 +31,12 @@ final class AdmsInstanceRoleGate
             return response('Unknown ADMS host', Response::HTTP_NOT_FOUND);
         }
 
+        // Dockerfile HEALTHCHECK uses /api/health on localhost; keep it
+        // available on both roles or Coolify will mark the container unhealthy.
+        if ($request->isMethod('GET') && $request->is('api/health')) {
+            return $next($request);
+        }
+
         $deviceEndpoint = $request->is('iclock', 'iclock/*', 'api/device', 'api/device/*');
         if ($role === 'console' && $deviceEndpoint) {
             return response('Device ingress lives on AT1', Response::HTTP_NOT_FOUND);
