@@ -13,6 +13,7 @@ use App\Http\Controllers\Admin\LegacyDirectoryController;
 use App\Http\Controllers\Admin\LegacyFleetController;
 use App\Http\Controllers\Admin\LegacyAttendanceReportController;
 use App\Http\Controllers\Admin\UserSyncController;
+use App\Http\Controllers\Admin\ZenHrIntegrationController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', function () {
@@ -21,6 +22,17 @@ Route::get('/', function () {
 
 Route::middleware(['auth', 'admin'])->prefix('admin')->name('admin.')->group(function () {
     Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
+    // AT2-only ZenHR integration; controller enforces host + enable flag.
+    // OAuth callback matches the URL registered with ZenHR exactly.
+    Route::get('/integrations/zenhr', [ZenHrIntegrationController::class, 'index'])
+        ->name('zenhr.index');
+    Route::post('/integrations/zenhr/connect', [ZenHrIntegrationController::class, 'connect'])
+        ->name('zenhr.connect');
+    Route::get('/integrations/zenhr/callback', [ZenHrIntegrationController::class, 'callback'])
+        ->name('zenhr.callback');
+    Route::post('/integrations/zenhr/test', [ZenHrIntegrationController::class, 'test'])
+        ->name('zenhr.test');
+
     // Operations inspired by the legacy app run ONLY in the existing
     // ADMS Enterprise design. Original dbo is read-only; device preferences
     // are limited to the operational adms schema.
