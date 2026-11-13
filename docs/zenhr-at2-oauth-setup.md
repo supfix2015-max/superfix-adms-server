@@ -17,7 +17,7 @@ Official ZenHR authorization documentation: https://api-docs.zenhr.com/
 1. `/admin/integrations/zenhr` displays a *separate* ZenHR section in original ADMS Enterprise UI.
 2. `POST /admin/integrations/zenhr/connect`: Admin-only, AT2-only, CSRF-protected entry point; creates a random 256-bit OAuth state stored in the current server session for 10 minutes; redirects the administrator to ZenHR.
 3. `GET /admin/integrations/zenhr/callback`: Exact URL registered with ZenHR. Validates same authenticated administrator and constant-time state; single-use session state; exchanges code with ZenHR over HTTPS (application UID/secret read **only** from AT2 Coolify secrets). Calls `who_am_i` before accepting access token; stores access+refresh token encrypted using Laravel `Crypt` in a single isolated `adms.zenhr_connections` SQL row.
-4. `POST /admin/integrations/zenhr/test`: Admin-only *read-only* `who_am_i` test (only while access token valid).
+4. `POST /admin/integrations/zenhr/test`: Admin-only `who_am_i` test. If the access token is expired/nearly expired, it now refreshes and atomically stores rotated encrypted OAuth tokens first. This may write **only** the isolated OAuth connection row; it never sends attendance.
 5. `php artisan adms:zenhr-readiness`: Checks exact callback, flag, credential presence, routes, table existence, and permissions without displaying credentials or accessing ZenHR.
 6. No posting attendance; `attendance_sync_enabled = false` in config. This protects original Hili and old ZenHR integration while branch mapping and duplicate reconciliation remain pending.
 
@@ -60,6 +60,8 @@ php artisan view:cache
 php artisan route:list --path=admin/integrations/zenhr
 php artisan adms:zenhr-readiness
 ```
+To check and automatically refresh an expired stored token without exposing secrets, run `php artisan adms:zenhr-connectivity`. It checks the ZenHR `who_am_i` API and prints only company/branch IDs and granted scopes. If the refresh token is missing, expired, or revoked, use the **Connect ZenHR** button to re-authorize. Never log token responses.
+
 After all preflights succeed, open
 `https://at2.superfix.ae/admin/integrations/zenhr`.
 Click **Connect ZenHR**, complete ZenHR authorization in the SAME browser session while logged in as ADMS admin, and return to AT2. Then click **Test Connection (Read-Only)**.
@@ -70,7 +72,7 @@ Authorization responses and credentials are never echoed. The connection test se
 
 ## Remaining phases (NOT implemented/active)
 
-- Production-safe automatic refresh-token rotation (stored encrypted refresh token is available).
+- Token refresh/rotation is implemented on `getUsableAccessToken()` and used by the connectivity test. Newly added vendor posting adapters must call it for each authorized request. The refresh token itself can expire or be revoked, in which case re-authorization remains necessary.
 - Read-only company branches and employee mapping by original badge vs ZenHR employment number and company+branch scoped employee ID.
 - Outbound attendance outbox, no duplicates, idempotent writes, retry/rate limits, historical cutover audit against old integration.
 - Never send historical Hili 213 records until already-synced ZenHR data have been audited.
