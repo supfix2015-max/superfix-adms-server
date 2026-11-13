@@ -49,6 +49,7 @@ RUN mkdir -p storage/app/public storage/framework/cache/data storage/framework/s
   && php -l config/adms_instance.php \
   && php -l app/Http/Middleware/AdmsInstanceRoleGate.php \
   && php -l app/Console/Commands/CollectZenHrAttendanceCommand.php \
+  && php -l app/Console/Commands/CheckAdmsSplitReadinessCommand.php \
   && php -l app/Services/ZenHrAttendanceOutbox.php \
   && php -l app/Services/LegacyAttendanceWriter.php \
   && php -l app/Services/LegacyAttendanceValueMapper.php \
