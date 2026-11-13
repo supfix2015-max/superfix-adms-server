@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Services\ZenHrOAuthService;
+use App\Services\ZenHrAttendanceOutbox;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
@@ -31,7 +32,7 @@ final class ZenHrIntegrationController extends Controller
             && trim((string) config('zenhr.client_secret')) !== '';
     }
 
-    public function index(Request $request, ZenHrOAuthService $service): View
+    public function index(Request $request, ZenHrOAuthService $service, ZenHrAttendanceOutbox $outbox): View
     {
         $this->guardAt2($request);
 
@@ -40,6 +41,8 @@ final class ZenHrIntegrationController extends Controller
             'storageReady' => $service->isProvisioned(),
             'connection' => $service->connectionInfo(),
             'syncEnabled' => (bool) config('zenhr.attendance_sync_enabled', false),
+            'outboxStats' => $outbox->stats(),
+            'autoCollect' => (bool) config('zenhr.outbox_auto_collect', false),
         ]);
     }
 
