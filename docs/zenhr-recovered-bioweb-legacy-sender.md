@@ -1,0 +1,124 @@
+# BioWeb CustomizedService.dll: verified ZenHR legacy protocol
+
+## Evidence from user's actual Windows DLL (static IL analysis, no execution)
+
+File: \`C:\zkcloud\BioWeb\CustomizedService.dll\`.
+The service connecting to ZenHR was confirmed by Windows process/DNS
+observations: \`C:\zkcloud\BioWeb\BioCoreService.exe\`.
+
+Key IL method locations:
+- \`MyModuleInitializer.Initialize\`: reads \`settings.json\` and
+  \`appsettings.json\`, saves \`MySettings.AttendanceId\` as transaction ID,
+  sets a timer (initial 10 seconds, interval 5 seconds).
+- \`<DoWorkAsync>d__17.MoveNext\`: refreshes access token as needed,
+  fetches employees and SQL attendance not yet exported; splits
+  into **10 attendance entries per bulk POST**, sleeps 1000 ms
+  between requests, and handles special failed exports.
+- \`AttendanceCustomService.GetNonExportedAttendance\`: SQL
+  \`SELECT * FROM Attendance WHERE Exported IS NULL ORDER BY Id\`.
+- \`<HTTPPost>d__20.MoveNext\`: resolves each ZKTeco
+  \`Attendance.BadgeNumber\` to ZenHR employee by exact equality
+  with \`employment_number\`. Fetches employee list again on cache miss.
+  If not found, logs error and skips that record.
+  Builds payload \`attendance_details\`:
+  - \`request_time\`: original \`VerifyTime\` formatted as
+    \`yyyy-MM-dd HH:mm:ss \` + configured \`TimezoneOffset\`
+    (**Dubai should be \`+0400\`**).
+  - \`request_type\`: **\`Int32.Parse(att.StatusId)\`**, NOT
+    order-based alternating, NOT a computed check-in/out.
+  - \`employee_id\`: ZenHR API's internal employee \`id\`.
+  - \`attendance_transaction_id\`: configured \`AttendanceId\`.
+  - \`added_by\`: 2 (machine).
+  - Optional GPS is parsed locally but is **not assigned in
+    the inspected object initializer**, thus not transmitted
+    in that path.
+- Uses \`HttpClient.PostAsync(MySettings.AttendanceUrl, JSON)\`.
+  Original \`AttendanceUrl\`:
+  \`https://aiapi.zenhr.com/api/v3/branches/17787/attendance_details/bulk_insert\`.
+- \`<HTTPPost>d__20.MoveNext\`: **HTTP status 202** is the
+  acceptance check; response body is logged, not interpreted
+  for individual punch success.
+- \`<ExportHTTPPost>d__19.MoveNext\`: on accepted batch,
+  \`AttendanceCustomService.SetExported(ids)\` calls:
+  \`UPDATE Attendance SET Exported=GETDATE() WHERE Id IN (...)\`.
+  On failed batch, uses \`markFailedTemperorly\` and remarks;
+  query paths include year 2000 and sentinel dates.
+  The new Laravel bridge must NOT modify the old
+  \`dbo.Attendance.Exported\` tracking column.
+- \`GetEmployees\` on the old service appears to fetch a
+  single employees page. New Laravel code scans all pages.
+
+## Important interpretation
+
+HR says ZenHR computes the employee's daily arrival/departure from
+the ordered punches. The old service **nevertheless includes the raw
+ZKTeco \`StatusId\` as \`request_type\`**; it does not itself alternate
+In/Out. Thus to preserve legacy behavior in Laravel, resolve the
+existing **original SQL \`StatusId\`** (not the normalized
+\`status\`/direction label in the ADMS outbox), pass it unchanged
+when it is one of 0 or 1, and let ZenHR do shift calculation.
+
+## Safer transition / manual pilot
+
+A new branch provides \`ZenHrLegacyAttendanceSender\` and command
+\`php artisan adms:zenhr-send-legacy\`.
+
+**No automatic ZenHR POST is enabled.** The command
+previews candidates by default. POST requires **both**
+\`--apply\` AND \`ZENHR_ATTENDANCE_POST_ENABLED=true\`.
+The existing \`attendance_sync_enabled=false\` remains unchanged.
+
+1. On old Windows server, safely read nonsecret configuration values:
+
+   \`\`\`powershell
+   $s=(Get-Content 'C:\zkcloud\BioWeb\settings.json' -Raw | ConvertFrom-Json).MySettings; [pscustomobject]@{AttendanceId=$s.AttendanceId;TimezoneOffset=$s.TimezoneOffset;BranchId=$s.BranchId} | Format-List
+   \`\`\`
+
+   Do **not** show \`RefreshToken\`, \`appsettings.json\`, OAuth
+   access tokens, connection strings or raw request logging.
+
+2. In Coolify **after review**, select
+   \`feature/zenhr-legacy-bioweb-sender-20261113\`; keep AT1 HTTP and AT2
+   HTTPS, \`ADMS_INSTANCE_ROLE=dual\`, and the shared SQL DB. Set:
+   \`\`\`dotenv
+   ZENHR_ATTENDANCE_BRANCH_ID=17787
+   ZENHR_ATTENDANCE_TRANSACTION_ID=<the nonsecret numeric old AttendanceId>
+   ZENHR_ATTENDANCE_POST_ENABLED=false
+   \`\`\`
+
+3. Check PHP syntax and inspect candidates:
+   \`\`\`bash
+   php -l app/Services/ZenHrLegacyAttendanceSender.php
+   php -l app/Console/Commands/SendZenHrLegacyAttendanceCommand.php
+   php artisan adms:split-readiness
+   php artisan adms:zenhr-send-legacy
+   php artisan adms:zenhr-outbox --stats
+   \`\`\`
+
+4. When agreed, set \`ZENHR_ATTENDANCE_POST_ENABLED=true\`,
+   redeploy, then send **exactly one** pilot event:
+   \`\`\`bash
+   php artisan adms:zenhr-send-legacy --limit=1 --apply
+   \`\`\`
+   Check HTTP 202 and the staff's actual ZenHR attendance history.
+   ZenHR API replies may not guarantee individual row processing.
+   Keep automated sending OFF until the pilot and old integration
+   coexistence are reviewed.
+
+5. The new sender only updates the isolated \`adms\` outbox:
+   pending → inflight → sent (HTTP 202), or unknown on
+   any unsuccessful/uncertain response. No automatic retry of
+   unknown records; no modification of \`dbo.Attendance\`.
+   Bad Hili clock events remain \`needs_review\`. Unmatched
+   employees are skipped. The original SQL status must be
+   exactly 0 or 1; unknown statuses are skipped.
+
+## Current database diagnostics from user
+
+22 local \`pending\`, 13 \`needs_review\`.
+19/22 match one of 275 ZenHR employees by
+\`employment_number\`, three do not match.
+Existing ZenHR daily records are NOT an exact raw-punch
+deduplication oracle. User explicitly accepts temporary
+duplicates or missing records during the migration,
+with later HR correction if needed.
