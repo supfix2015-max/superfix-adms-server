@@ -12,7 +12,8 @@ use RuntimeException;
  *
  * Confirmed by inspection of user-supplied CustomizedService.dll:
  * - BadgeNumber == ZenHR employment_number => ZenHR employee.id
- * - request_type == int.Parse(dbo.Attendance.StatusId)
+ * - request_type == int.Parse(dbo.Attendance.StatusId) on the original server
+ *   but migrated SQL has nullable StatusId; map Check-In/Check-Out Status instead
  * - request_time == local VerifyTime + timezone offset (+0400)
  * - attendance_transaction_id == MySettings.AttendanceId
  * - added_by == 2; bulk batches up to 10; HTTP 202 means accepted
@@ -80,7 +81,7 @@ final class ZenHrLegacyAttendanceSender
                 'request_time' => CarbonImmutable::createFromFormat(
                     '!Y-m-d H:i:s', $time, 'Asia/Dubai'
                 )->format('Y-m-d H:i:s O'),
-                // Do not alternate; preserve original BioWeb StatusId.
+                // Do not alternate; preserve StatusId or its exact Check-In/Out equivalent.
                 'request_type' => $raw,
             ];
         }
@@ -268,30 +269,45 @@ final class ZenHrLegacyAttendanceSender
         return array_map(static fn (array $ids): array => array_keys($ids), $map);
     }
 
-    /** Original BioWeb uses dbo.Attendance.StatusId, never Status text. */
+    /**
+     * Use original SQL StatusId when populated. The migrated SQL database
+     * stores StatusId=NULL and Status='Check-In' / 'Check-Out': those are
+     * equivalent to 0 / 1 in the confirmed ZenHR bulk request contract.
+     *
+     * If an ADMS-only punch has not yet been mirrored to dbo.Attendance,
+     * fall back to its staged normalized status. Never invent a status.
+     */
     private function oldStatusId(object $item): ?int
     {
         $db = DB::connection('legacy_sqlsrv')->table('dbo.Attendance');
 
         if ((string) $item->source_kind === 'dbo') {
             $records = $db->where('Id', (int) $item->source_id)
-                ->get(['BadgeNumber', 'VerifyTime', 'StatusId']);
+                ->get(['BadgeNumber', 'VerifyTime', 'StatusId', 'Status']);
         } else {
             $records = $db->where('BadgeNumber', (string) $item->badge_number)
                 ->where('VerifyTime', substr((string) $item->punched_at_local, 0, 19))
-                ->limit(10)->get(['BadgeNumber', 'VerifyTime', 'StatusId']);
+                ->limit(10)->get(['BadgeNumber', 'VerifyTime', 'StatusId', 'Status']);
         }
-        if ($records->isEmpty()) return null;
+
+        if ($records->isEmpty()) {
+            return (string) $item->source_kind === 'adms'
+                ? ZenHrLegacyRequestType::fromFields(null, $item->direction)
+                : null;
+        }
+
         $states = [];
         foreach ($records as $r) {
             if (trim((string) $r->BadgeNumber) !== trim((string) $item->badge_number)
                 || substr((string) $r->VerifyTime, 0, 19) !== substr((string) $item->punched_at_local, 0, 19)) {
                 return null;
             }
-            $s = trim((string) ($r->StatusId ?? ''));
-            if ($s !== '0' && $s !== '1') return null;
-            $states[$s] = (int) $s;
+
+            $state = ZenHrLegacyRequestType::fromFields($r->StatusId, $r->Status);
+            if ($state === null) return null;
+            $states[$state] = true;
         }
-        return count($states) === 1 ? current($states) : null;
+
+        return count($states) === 1 ? (int) array_key_first($states) : null;
     }
 }
