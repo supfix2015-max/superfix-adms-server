@@ -54,7 +54,7 @@ final class ZenHrAttendanceOutbox
      */
     public function collect(int $limit = 500, bool $apply = false): array
     {
-        if (! in_array(config('adms_instance.role'), ['console'], true)
+        if (! in_array(config('adms_instance.role'), ['console', 'dual'], true)
             || ! config('zenhr.enabled', false)
             || strtolower((string) parse_url((string) config('app.url'), PHP_URL_HOST)) !== 'at2.superfix.ae') {
             throw new RuntimeException('ZenHR outbox collector is allowed only on configured AT2 console.');
