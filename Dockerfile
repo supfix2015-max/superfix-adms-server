@@ -46,6 +46,10 @@ RUN mkdir -p storage/app/public storage/framework/cache/data storage/framework/s
   && php -l app/Console/Commands/CheckZenHrReadinessCommand.php \
   && php -l app/Services/ZenHrOAuthService.php \
   && php -l config/zenhr.php \
+  && php -l config/adms_instance.php \
+  && php -l app/Http/Middleware/AdmsInstanceRoleGate.php \
+  && php -l app/Console/Commands/CollectZenHrAttendanceCommand.php \
+  && php -l app/Services/ZenHrAttendanceOutbox.php \
   && php -l app/Services/LegacyAttendanceWriter.php \
   && php -l app/Services/LegacyAttendanceValueMapper.php \
   && php -l app/Services/LegacyDashboardService.php \
@@ -69,6 +73,7 @@ RUN mkdir -p storage/app/public storage/framework/cache/data storage/framework/s
 COPY docker/nginx.conf /etc/nginx/sites-available/default
 COPY docker/supervisord.conf /etc/supervisor/conf.d/superfix-adms.conf
 COPY docker/entrypoint.sh /usr/local/bin/superfix-entrypoint
+COPY docker/zenhr-outbox-worker.sh /usr/local/bin/zenhr-outbox-worker
 RUN chmod 0755 /usr/local/bin/superfix-entrypoint && nginx -t
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 CMD curl -fsS -o /dev/null http://127.0.0.1:8080/api/health || exit 1
