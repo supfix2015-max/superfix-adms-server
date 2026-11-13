@@ -164,3 +164,49 @@ php artisan adms:zenhr-send-legacy
 \`\`\`
 A new nonzero eligible count is expected, but must be read from
 the live command; no successful vendor attendance POST yet.
+
+
+## 2026-11-13: First live ZenHR POST accepted and automatic sender prepared
+
+First manual command after the migrated SQL StatusId fallback was deployed:
+\`\`\`text
+php artisan adms:zenhr-send-legacy --limit=1 --apply
+Outbox pending: 23; valid employee/status/timezone: 20;
+unmatched employee: 3; submitted: 1; HTTP: 202;
+new outbox state: sent.
+\`\`\`
+
+This confirms **HTTP acceptance**, not individual row visibility in ZenHR
+HR admin UI. Verify one named punch in ZenHR first if possible.
+
+New independent automatic sending control:
+\`\`\`dotenv
+ZENHR_OUTBOX_AUTO_COLLECT=true
+ZENHR_ATTENDANCE_POST_ENABLED=true
+ZENHR_ATTENDANCE_AUTO_SEND=false
+\`\`\`
+A deployment with \`AUTO_SEND=false\` continues staging and preserves
+manual sending ability. After confirming the pilot, explicitly switch
+\`AUTO_SEND=true\`, then redeploy the SAME application/branch. The
+existing outbox worker will stage up to 500 records/minute and send
+one ZenHR bulk request up to 10 verified records/minute. Do not
+change AT1 HTTP, AT2 HTTPS, SQL credentials, or role \`dual\`.
+
+Check:
+\`\`\`bash
+php -l app/Console/Commands/AutoSendZenHrLegacyAttendanceCommand.php
+php artisan adms:zenhr-outbox --stats
+php artisan adms:zenhr-send-legacy
+\`\`\`
+The sender stops automatically upon a failed or unknown request in the
+active worker, and the SQL guard blocks future sending whenever any
+\`unknown\`, \`inflight\`, or \`failed\` states remain. Missing employees
+remain pending; Hili clock anomalies remain needs_review.
+
+To stop *new automatic* sending, change
+\`ZENHR_ATTENDANCE_AUTO_SEND=false\` in Coolify and redeploy.
+Manual outbound posting remains guarded independently by
+\`ZENHR_ATTENDANCE_POST_ENABLED\`.
+
+Do not confuse \`HTTP 202\` with verified individual punch delivery;
+vendor may handle bulk messages asynchronously.
