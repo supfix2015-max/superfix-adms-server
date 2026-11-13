@@ -210,3 +210,25 @@ Manual outbound posting remains guarded independently by
 
 Do not confuse \`HTTP 202\` with verified individual punch delivery;
 vendor may handle bulk messages asynchronously.
+
+
+## 13 Nov 2026: observed exact four-hour drift in ZenHR UI
+
+User confirmed after HTTP 202 acceptance that two corresponding punches had:
+- Local ZKTeco/SQL: 2026-11-13 15:58:07; ZenHR UI: 11:58 AM
+- Local ZKTeco/SQL: 2026-11-13 22:27:16; ZenHR UI: 06:27 PM
+- ZenHR GET /branches/17787: timezone "Abu Dhabi", HTTP 200.
+- Windows original BioWeb MySettings.TimezoneOffset was blank, not +0400.
+
+So the new sender's previous format "Y-m-d H:i:s O" (e.g. "2026-11-13 15:58:07 +0400") is the prime suspect: ZenHR UI shows exactly the UTC conversion, four hours earlier than the local wall-clock. On this tenant, match the old working integration by formatting request_time as "Y-m-d H:i:s" with no offset (e.g. "2026-11-13 15:58:07").
+
+Implemented in ZenHrLegacyRequestTime and the shared preview for manual/auto sender; regression tests added. Validate with one NEW punch, not proof of vendor's general timezone behavior.
+
+**Do not redeploy while AUTO_SEND=true**. First set ZENHR_ATTENDANCE_AUTO_SEND=false in Coolify, save, redeploy, then verify that config() shows false. With the new code:
+- php -l app/Services/ZenHrLegacyAttendanceSender.php
+- php -l app/Services/ZenHrLegacyRequestTime.php
+- php artisan tinker --execute='dump(\App\Services\ZenHrLegacyRequestTime::fromSqlLocal("2026-11-13 15:58:07"));'
+- php artisan adms:zenhr-send-legacy (dry-run)
+- php artisan adms:zenhr-send-legacy --limit=1 --apply (one unique pending event). Verify displayed timestamp in ZenHR before auto-send.
+
+Already accepted 11+ punch records are NOT repaired by this change. Reconcile/correct dates in ZenHR with HR or confirmed vendor admin API before any re-send. Do not reset outbox sent to pending or re-send them blindly.
