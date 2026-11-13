@@ -4,6 +4,7 @@ namespace App\Console\Commands;
 
 use App\Services\ZenHrOAuthService;
 use App\Services\ZenHrPunchIdentity;
+use App\Services\ZenHrRecordValues;
 use Carbon\CarbonImmutable;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
@@ -148,12 +149,20 @@ final class AuditZenHrPunchesCommand extends Command
 
             $index = [];
             $missingIdentity = 0;
+            $structuredIdentityFields = 0;
+            $structuredSummaryFields = 0;
             foreach ($data as $record) {
-                $date = substr((string) ($record['attendance_date'] ?? ''), 0, 10);
-                $numbers = array_unique(array_filter(array_map('trim', [
-                    (string) ($record['card_id'] ?? ''),
-                    (string) ($record['employee']['employment_number'] ?? ''),
-                ]), static fn (string $x): bool => $x !== ''));
+                if (! is_array($record)) {
+                    throw new RuntimeException('Unexpected ZenHR attendance row type; audit stopped.');
+                }
+                $date = substr(ZenHrRecordValues::scalar($record['attendance_date'] ?? null) ?? '', 0, 10);
+                $employee = is_array($record['employee'] ?? null) ? $record['employee'] : [];
+                $structuredIdentityFields += ZenHrRecordValues::structuredFieldCount($record, ['card_id']);
+                $structuredIdentityFields += ZenHrRecordValues::structuredFieldCount($employee, ['employment_number']);
+                $structuredSummaryFields += ZenHrRecordValues::structuredFieldCount($record, [
+                    'entry_time', 'exit_time', 'first_in', 'last_out',
+                ]);
+                $numbers = ZenHrRecordValues::identities($record);
                 if ($date === '' || $numbers === []) {
                     $missingIdentity++;
                     continue;
@@ -179,12 +188,7 @@ final class AuditZenHrPunchesCommand extends Command
                 $possible++;
                 $clock = substr($event['local'], 11, 8);
                 foreach ($records as $record) {
-                    $times = array_map('trim', [
-                        (string) ($record['entry_time'] ?? ''),
-                        (string) ($record['exit_time'] ?? ''),
-                        (string) ($record['first_in'] ?? ''),
-                        (string) ($record['last_out'] ?? ''),
-                    ]);
+                    $times = ZenHrRecordValues::summaryTimes($record);
                     if (in_array($clock, $times, true) || in_array($event['local'], $times, true)) {
                         $matchedSummaryTime++;
                         break;
@@ -197,6 +201,8 @@ final class AuditZenHrPunchesCommand extends Command
                 ['Dates scanned (extra day for night shifts)', $from.' to '.$to],
                 ['ZenHR records loaded', count($data)],
                 ['ZenHR rows missing card AND employee number', $missingIdentity],
+                ['Structured employee/card fields skipped', $structuredIdentityFields],
+                ['Structured summary-time fields not comparable', $structuredSummaryFields],
                 ['Candidate events with same employee/attendance date', $possible],
                 ['Of these, exact summary time matches', $matchedSummaryTime],
                 ['Candidates with no visible employee/date match', $noDay],
