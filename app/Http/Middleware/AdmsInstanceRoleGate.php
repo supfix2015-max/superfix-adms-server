@@ -24,17 +24,18 @@ final class AdmsInstanceRoleGate
             return response('ADMS instance role misconfigured', Response::HTTP_SERVICE_UNAVAILABLE);
         }
 
+        // Docker health probe uses Host: 127.0.0.1:8080; process
+        // before the public-host check so both instances remain healthy.
+        if ($request->isMethod('GET') && $request->is('api/health')
+            && in_array($request->getHost(), ['127.0.0.1', 'localhost'], true)) {
+            return $next($request);
+        }
+
         $host = strtolower($request->getHost());
         $expected = (string) config('adms_instance.'.
             ($role === 'devices' ? 'device_host' : 'console_host'));
         if (! hash_equals(strtolower($expected), $host)) {
             return response('Unknown ADMS host', Response::HTTP_NOT_FOUND);
-        }
-
-        // Dockerfile HEALTHCHECK uses /api/health on localhost; keep it
-        // available on both roles or Coolify will mark the container unhealthy.
-        if ($request->isMethod('GET') && $request->is('api/health')) {
-            return $next($request);
         }
 
         $deviceEndpoint = $request->is('iclock', 'iclock/*', 'api/device', 'api/device/*');
