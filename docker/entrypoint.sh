@@ -35,4 +35,12 @@ if [ "${APP_ENV:-production}" = "staging" ] || [ "${APP_ENV:-production}" = "tes
     sed -i '/^\[program:queue\]/,$ s/^autostart=true$/autostart=false/' \
         /etc/supervisor/conf.d/superfix-adms.conf
 fi
+# Explicit AT2-only opt-in for perpetual READ/STAGE of attendance after
+# the DBA has provisioned the isolated outbox tables. Never auto-start AT1.
+# Never sends anything to ZenHR until a separately verified adapter is enabled.
+if [ "${ADMS_INSTANCE_ROLE:-transition}" = "console" ] \
+    && [ "${ZENHR_OUTBOX_AUTO_COLLECT:-false}" = "true" ]; then
+    sed -i '/^\[program:zenhr-outbox\]/,$ s/^autostart=false$/autostart=true/' \
+        /etc/supervisor/conf.d/superfix-adms.conf
+fi
 exec "$@"
