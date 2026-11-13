@@ -43,6 +43,7 @@ RUN mkdir -p storage/app/public storage/framework/cache/data storage/framework/s
   && php -l app/Console/Commands/ImportMissingHiliAttendanceCommand.php \
   && php -l app/Console/Commands/CheckBioCloudUICommand.php \
   && php -l app/Http/Controllers/Admin/ZenHrIntegrationController.php \
+  && php -l app/Console/Commands/CheckZenHrReadinessCommand.php \
   && php -l app/Services/ZenHrOAuthService.php \
   && php -l config/zenhr.php \
   && php -l app/Services/LegacyAttendanceWriter.php \
