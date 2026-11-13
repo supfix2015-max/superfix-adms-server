@@ -14,7 +14,14 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        if (config('app.env') === 'production') {
+        // AT2 runs behind the Coolify TLS reverse proxy and may be tagged
+        // APP_ENV=staging. Generate secure Laravel links for that exact
+        // HTTPS app URL even when PHP receives proxy-to-container HTTP.
+        // Do not change unrelated AT1 device ingress behavior.
+        $appUrl = (string) config('app.url');
+        $at2OverHttps = parse_url($appUrl, PHP_URL_HOST) === 'at2.superfix.ae'
+            && parse_url($appUrl, PHP_URL_SCHEME) === 'https';
+        if (config('app.env') === 'production' || $at2OverHttps) {
             URL::forceScheme('https');
         }
     }
