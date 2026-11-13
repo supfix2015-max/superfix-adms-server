@@ -2,7 +2,7 @@
 
 @section('title', 'ADMS · ZenHR Integration')
 @section('page_title', 'ZenHR Integration')
-@section('page_subtitle', 'AT2-only OAuth connection for Superfix ADMS Enterprise. Attendance delivery remains disabled until employee mapping is verified.')
+@section('page_subtitle', 'AT1 receives device punches over HTTP; AT2 provides the HTTPS console, ZenHR OAuth and source attendance outbox.')
 
 @section('content')
 <div class="row g-4">
@@ -67,8 +67,40 @@
             </ul>
             <div class="alert alert-info small mb-0">
                 Legacy AT1 API credentials are not used. Device ATTLOG reception, current SQL attendance,
-                and hourly clock sync continue independently. Next phase: employee/branch mapping,
-                duplicate screening, and a one-punch controlled pilot.
+                and hourly clock sync continue independently. No local employee mapping. Outbound delivery requires a verified ZenHR branch and POST body contract.
+            </div>
+        </div>
+    </div>
+    <div class="col-12">
+        <div class="card shadow-sm p-4">
+            <div class="d-flex justify-content-between align-items-center gap-2 mb-3 flex-wrap">
+                <h5 class="mb-0"><i class="bi bi-arrow-left-right me-2"></i>Attendance Outbox (Nov 12 onward)</h5>
+                <span class="badge bg-warning text-dark">ZenHR sending OFF · Not yet delivered</span>
+            </div>
+            <p class="text-secondary small mb-3">
+                AT1 (HTTP) receives ZKTeco ATTLOG and answers commands; AT2 (HTTPS) reads both original
+                <code>dbo.Attendance</code> and <code>adms.attendance_logs</code>. The collector
+                deduplicates by device, badge, timestamp and punch function. No employee matching is performed.
+            </p>
+            <div class="table-responsive">
+                <table class="table table-sm align-middle">
+                    <tbody>
+                        <tr><th>Source start (Dubai)</th><td>2026-11-12 00:00:00 onward</td></tr>
+                        <tr><th>Outbox SQL</th><td>{{ $outboxStats['ready'] ? 'Ready · adms.zenhr_attendance_outbox' : 'Needs DBA setup · docs/sql/adms-zenhr-attendance-outbox.sql' }}</td></tr>
+                        <tr><th>Automatic collection</th><td>{{ $autoCollect ? 'Configured on AT2 (after daemon restart)' : 'OFF · set ZENHR_OUTBOX_AUTO_COLLECT=true on AT2 after SQL setup' }}</td></tr>
+                        <tr><th>Queued (not delivered)</th><td><strong>{{ number_format((int) ($outboxStats['counts']['pending'] ?? 0)) }}</strong></td></tr>
+                        <tr><th>Needs review</th><td><strong>{{ number_format((int) ($outboxStats['counts']['needs_review'] ?? 0)) }}</strong> (including Hili clock repair period)</td></tr>
+                        <tr><th>Confirmed sent</th><td>{{ number_format((int) ($outboxStats['counts']['sent'] ?? 0)) }}</td></tr>
+                        <tr><th>Original SQL cursor</th><td>{{ $outboxStats['cursors']?->last_dbo_id ?? '—' }}</td></tr>
+                        <tr><th>Staged ATTLOG cursor</th><td>{{ $outboxStats['cursors']?->last_adms_id ?? '—' }}</td></tr>
+                    </tbody>
+                </table>
+            </div>
+            <div class="alert alert-warning mb-0 small">
+                A connected OAuth account is not proof of attendance delivery.
+                The vendor POST payload and branch context must be verified before enabling external sends,
+                and already-delivered records from the old integration must be excluded.
+                This screen intentionally reports source collection separately from ZenHR delivery.
             </div>
         </div>
     </div>
