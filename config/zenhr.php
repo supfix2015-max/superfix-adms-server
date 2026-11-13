@@ -19,6 +19,9 @@ return [
         'create:attendance_detail',
         'bulk_insert:attendance_detail',
     ],
+    // Selected ZenHR company branch. Never infer from physical device/office location.
+    // Deliberately unset until the account's branch ID has been verified.
+    'attendance_branch_id' => (int) env('ZENHR_ATTENDANCE_BRANCH_ID', 0),
     'outbox_cutoff_local' => '2026-11-12 00:00:00',
     'outbox_auto_collect' => filter_var(env('ZENHR_OUTBOX_AUTO_COLLECT', false), FILTER_VALIDATE_BOOLEAN),
     'attendance_sync_enabled' => false, // No vendor POSTS until branch/payload contract verified.
