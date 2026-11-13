@@ -38,6 +38,7 @@ class Device extends Model
         'last_sync',
         'raw_config',
         'notes',
+        'requires_license',
     ];
 
     protected $casts = [
@@ -49,6 +50,7 @@ class Device extends Model
         'enrolled_faces' => 'integer',
         'enrolled_fingerprints' => 'integer',
         'port' => 'integer',
+        'requires_license' => 'boolean',
     ];
 
     public function attendanceLogs(): HasMany

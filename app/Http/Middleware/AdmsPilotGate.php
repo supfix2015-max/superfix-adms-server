@@ -4,6 +4,8 @@ namespace App\Http\Middleware;
 
 use Closure;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
@@ -28,7 +30,25 @@ class AdmsPilotGate
             ?: $request->input('SN', '')
         ));
         $serials = config('adms_pilot.serials', []);
-        if ($serial === '' || ! in_array($serial, $serials, true)) {
+        $explicitlyAllowed = $serial !== '' && in_array($serial, $serials, true);
+        $historicallyRegistered = false;
+
+        // Allow original registered devices when explicitly enabled.
+        // No blanket wildcard. The source login is SELECT only.
+        if (! $explicitlyAllowed && $serial !== ''
+            && preg_match('/^[A-Za-z0-9._:-]{1,64}$/', $serial)
+            && config('adms_pilot.allow_historical', false)) {
+            $historicallyRegistered = Cache::store('file')->remember(
+                'adms_pilot_original_device_'.hash('sha256', $serial),
+                120,
+                static fn (): bool => DB::connection('legacy_sqlsrv')
+                    ->table('dbo.Device')
+                    ->where('DeviceSerialNumber', $serial)
+                    ->exists()
+            );
+        }
+
+        if (! $explicitlyAllowed && ! $historicallyRegistered) {
             return response('ADMS DEVICE DENIED', Response::HTTP_FORBIDDEN);
         }
 

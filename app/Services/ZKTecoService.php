@@ -13,6 +13,7 @@ use App\Models\RawLog;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -39,6 +40,22 @@ class ZKTecoService
             $device = $this->resolveDevice($request, $context);
             $this->attachRawLogDevice($rawLog, $device);
             $this->touchDevice($device, $request, $context);
+
+            // PUSH SDK §2.3: GET /iclock/cdata?SN=...&type=time must
+            // return an offset-aware local clock, not GET OPTION FROM.
+            // The old generic GET branch accidentally returned options
+            // and could leave devices displaying the container's UTC time.
+            if ($request->isMethod('GET')
+                && strcasecmp(trim((string) $request->query('type', '')), 'time') === 0) {
+                $response = 'Time='.$this->systemClockService->formatForPushTimeResponse()."\r\n";
+                $this->finishRawLog($rawLog, 'processed', 0, [
+                    'mode' => 'time_sync',
+                    'timezone' => $this->systemClockService->timezoneName(),
+                ]);
+                $this->logRequestHandled($context['endpoint'], $device, ['mode' => 'time_sync']);
+
+                return $response;
+            }
 
             if ($this->shouldRespondWithOptions($request, $context)) {
                 $response = $this->buildOptionsResponse($device);
@@ -80,6 +97,38 @@ class ZKTecoService
         }
     }
 
+    /**
+     * Legacy PUSH variant: after a SET OPTIONS DateTime command the device
+     * may request /iclock/rtdata?SN=...&type=time.
+     */
+    public function handleRealtimeData(Request $request): string
+    {
+        $context = $this->buildContext($request, '/iclock/rtdata');
+        $rawLog = $this->createRawLog(null, $context);
+
+        try {
+            $device = $this->resolveDevice($request, $context);
+            $this->attachRawLogDevice($rawLog, $device);
+            $this->touchDevice($device, $request, $context);
+
+            if (! $request->isMethod('GET')
+                || strcasecmp(trim((string) $request->query('type', '')), 'time') !== 0) {
+                $this->finishRawLog($rawLog, 'processed', 0, ['mode' => 'unsupported_rtdata']);
+                return "OK\r\n";
+            }
+
+            $this->finishRawLog($rawLog, 'processed', 0, [
+                'mode' => 'realtime_time_sync',
+                'timezone' => $this->systemClockService->timezoneName(),
+            ]);
+
+            return $this->systemClockService->formatForRealtimeTimeResponse()."\r\n";
+        } catch (\Throwable $e) {
+            $this->finishRawLog($rawLog, 'failed', 0, $context['metadata'], $e->getMessage());
+            throw $e;
+        }
+    }
+
     public function handleGetRequest(Request $request): string
     {
         $context = $this->buildContext($request, '/iclock/getrequest');
@@ -90,6 +139,45 @@ class ZKTecoService
             $this->attachRawLogDevice($rawLog, $device);
             $this->touchDevice($device, $request, $context);
 
+            // Dedicated time-only response is independent from the normal
+            // command queue. It works for ALL explicitly eligible registered
+            // devices when opted in, even while ordinary command dispatch
+            // remains OFF. No biometric/reboot/admin command is exposed.
+            $clockOnly = $this->unverifiedLegacyClockCommand($device);
+            if ($clockOnly !== null) {
+                $this->finishRawLog($rawLog, 'processed', 1, [
+                    'mode' => 'legacy_time_only_sent',
+                    'command' => 'SET OPTIONS DateTime',
+                    'authenticated' => $this->hasAuthenticatedDeviceToken($request, $device),
+                ]);
+
+                return $clockOnly."\r\n";
+            }
+
+            // An explicitly enabled, one-time retrospective ATTLOG read for
+            // the named original terminal. It is a read request only; it does
+            // NOT expose arbitrary queued commands to tokenless devices.
+            $backfillCommand = $this->unverifiedHistoricalAttendanceQuery($device);
+            if ($backfillCommand !== null) {
+                $this->finishRawLog($rawLog, 'processed', 1, [
+                    'mode' => 'legacy_attlog_backfill_sent',
+                    'command' => 'DATA QUERY ATTLOG',
+                    'authenticated' => $this->hasAuthenticatedDeviceToken($request, $device),
+                ]);
+
+                return $backfillCommand."\r\n";
+            }
+
+            // Ordinary commands and their replies still require a verified
+            // per-device token; serial-only HTTP access grants time only.
+            if (config('zkteco.command_require_token', true)
+                && ! $this->hasAuthenticatedDeviceToken($request, $device)) {
+                $this->finishRawLog($rawLog, 'processed', 0, [
+                    'command' => null, 'command_authorization' => 'required',
+                ]);
+                return "OK\r\n";
+            }
+
             // Read-only pilot mode: never dispatch a queued device command or
             // auto-enroll users from copied MySQL state. The device may poll safely.
             if (! config('zkteco.dispatch_commands', false)) {
@@ -98,6 +186,9 @@ class ZKTecoService
                 return "OK\r\n";
             }
 
+            // Opt-in periodic clock correction is only queued for a
+            // token-authenticated device, never for serial-only HTTP clients.
+            $this->ensureAutomaticTimeSyncQueued($device);
             $this->ensureAutomaticEmployeePullQueued($device);
 
             $command = $this->findDispatchableCommand($device);
@@ -142,6 +233,29 @@ class ZKTecoService
             $device = $this->resolveDevice($request, $context);
             $this->attachRawLogDevice($rawLog, $device);
             $this->touchDevice($device, $request, $context);
+
+            // A spoofed serial must never acknowledge an ordinary queued
+            // command. The only tokenless exception recognizes the exact
+            // temporary time-only command ID, and modifies no queue rows.
+            if (config('zkteco.command_require_token', true)
+                && ! $this->hasAuthenticatedDeviceToken($request, $device)) {
+                if ($this->acceptTimeOnlyAcknowledgement($device, $context)) {
+                    $this->finishRawLog($rawLog, 'processed', 0, [
+                        'mode' => 'legacy_time_only_reply',
+                        'authenticated' => false,
+                    ]);
+                    return "OK\r\n";
+                }
+                if ($this->acceptHistoricalAttendanceQueryReply($device, $context)) {
+                    $this->finishRawLog($rawLog, 'processed', 0, [
+                        'mode' => 'legacy_attlog_backfill_reply',
+                        'authenticated' => false,
+                    ]);
+                    return "OK\r\n";
+                }
+
+                throw new \Illuminate\Auth\Access\AuthorizationException('Device command callback authentication required');
+            }
 
             $records = $this->extractCommandReplyRecords($context);
             if ($records === []) {
@@ -303,6 +417,20 @@ class ZKTecoService
             'op_stamp' => $query['OpStamp'] ?? $bodyPairs['OpStamp'] ?? null,
             'metadata' => $metadata,
         ];
+    }
+
+    private function hasAuthenticatedDeviceToken(Request $request, Device $device): bool
+    {
+        $key = (string) config('zkteco.token_query_key', 'token');
+        $provided = $request->query($key)
+            ?: $request->header('X-Device-Token')
+            ?: $request->bearerToken();
+
+        return is_string($device->api_token)
+            && $device->api_token !== ''
+            && is_string($provided)
+            && $provided !== ''
+            && hash_equals($device->api_token, $provided);
     }
 
     private function resolveDevice(Request $request, array $context): Device
@@ -526,6 +654,14 @@ class ZKTecoService
             'Encrypt='.(config('zkteco.option_encrypt') ? '1' : '0'),
         ];
 
+        // Optional PUSH firmware clock synchronization hint. The terminal
+        // may ignore this, so verify the actual device clock before relying
+        // on it; authenticated remote time commands remain separate.
+        $syncInterval = (int) config('zkteco.option_sync_time_seconds', 0);
+        if ($syncInterval > 0) {
+            $lines[] = 'SyncTime='.$syncInterval;
+        }
+
         return implode("\r\n", $lines)."\r\n";
     }
 
@@ -602,11 +738,52 @@ class ZKTecoService
             ];
         }
 
+        // A PUSH device answers DATA QUERY ATTLOG with Stamp=0. Store
+        // this retrospective batch in adms first so historic device-clock
+        // offsets / unknown badges cannot poison dbo.Attendance or cause
+        // full-batch retries. Ordinary live Stamp>0 remains writable.
+        $queryStamp = trim((string) (
+            $context['metadata']['Stamp']
+            ?? $context['metadata']['stamp']
+            ?? ''
+        ));
+        $stagingBackfill = config('zkteco.attlog_backfill_enabled', false)
+            && (string) $device->serial_number === (string) config('zkteco.attlog_backfill_serial', '')
+            && $queryStamp === '0';
+
         // Under explicit cutover, write first to the ORIGINAL SQL Server DB.
         // If that fails, return an error (not OK) to the device; a retry will
         // check and avoid duplicating the original SQL Server punch.
-        if (config('legacy_attendance.attendance_write_enabled', false)) {
-            app(LegacyAttendanceWriter::class)->persist($device, $preparedRecords);
+        // IMPORTANT: global cutover enabled does not mean every terminal
+        // may INSERT into original dbo.Attendance. Non-approved serials are
+        // accepted only into isolated adms.attendance_logs and ACKed after
+        // successful staging. This avoids an endless 500/retry loop that was
+        // observed for a terminal outside the Hili writer allowlist.
+        $legacyWriter = app(LegacyAttendanceWriter::class);
+        $eligibleOriginalWriter = ! $stagingBackfill
+            && $legacyWriter->canWriteFor($device);
+
+        if ($eligibleOriginalWriter) {
+            $sourceRecords = $preparedRecords;
+            // Hili's clock was four hours slow before the 2026-11-12
+            // correction. Preserve pre-correction device history in adms
+            // for reconciliation and avoid silently polluting original
+            // dbo.Attendance with unverified, possibly shifted timestamps.
+            $reviewBefore = (string) config('zkteco.attlog_backfill_review_before', '');
+            $backfillSerial = (string) config('zkteco.attlog_backfill_serial', '');
+            if ($reviewBefore !== '' && $backfillSerial !== ''
+                && hash_equals($backfillSerial, (string) $device->serial_number)
+                && preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', $reviewBefore)) {
+                $timezone = (string) config('legacy_attendance.attendance_wallclock_timezone', 'Asia/Dubai');
+                $sourceRecords = $preparedRecords->filter(static function (array $record) use ($reviewBefore, $timezone): bool {
+                    return \Carbon\CarbonImmutable::instance($record['log_time'])
+                        ->setTimezone($timezone)->format('Y-m-d H:i:s') >= $reviewBefore;
+                })->values();
+            }
+
+            if ($sourceRecords->isNotEmpty()) {
+                $legacyWriter->persist($device, $sourceRecords);
+            }
         }
 
         $newHashes = [];
@@ -651,11 +828,14 @@ class ZKTecoService
                 ->values();
 
             if ($employeeRows->isNotEmpty()) {
-                Employee::query()->upsert(
-                    $employeeRows->all(),
-                    ['employee_id'],
-                    ['device_id', 'uid', 'sync_uid', 'card_no', 'name', 'sync_name', 'status', 'raw_payload', 'updated_at']
-                );
+                // Keep each MERGE below SQL Server's 2,100-parameter ceiling.
+                foreach ($employeeRows->chunk(50) as $batch) {
+                    Employee::query()->upsert(
+                        $batch->all(),
+                        ['employee_id'],
+                        ['device_id', 'uid', 'sync_uid', 'card_no', 'name', 'sync_name', 'status', 'raw_payload', 'updated_at']
+                    );
+                }
             }
 
             $employeeMap = Employee::query()
@@ -669,6 +849,9 @@ class ZKTecoService
                 ->flip();
 
             $rows = $preparedRecords
+                // A single device may resend the same punch more than once
+                // within the same POST. Keep only one row per fingerprint.
+                ->unique('payload_hash')
                 ->reject(fn (array $record) => $existingHashes->has($record['payload_hash']))
                 ->map(function (array $record) use ($device, $employeeMap): array {
                     return [
@@ -694,7 +877,16 @@ class ZKTecoService
                 ->values();
 
             if ($rows->isNotEmpty()) {
-                DB::table('attendance_logs')->insertOrIgnore($rows->all());
+                // SQL Server's grammar throws for insertOrIgnore.
+                // The filtered UNIQUE(payload_hash) index is the final
+                // duplicate-protection guard across concurrent requests.
+                // On an actual insert error the transaction rolls back
+                // and the device will safely retry the batch.
+                // 50 rows * ~16 columns stays well within SQL Server's
+                // 2,100 bound-parameter ceiling for large device uploads.
+                foreach ($rows->chunk(50) as $batch) {
+                    DB::table('attendance_logs')->insert($batch->all());
+                }
                 $newHashes = $rows->pluck('payload_hash')->all();
             }
         });
@@ -719,8 +911,15 @@ class ZKTecoService
             'metadata' => [
                 'table' => 'ATTLOG',
                 'warnings' => $warnings,
+                'staging_backfill' => $stagingBackfill,
+                'original_write_mode' => $eligibleOriginalWriter
+                    ? 'approved_original_writer'
+                    : 'adms_staging_only',
+                'review_cutoff' => config('zkteco.attlog_backfill_review_before'),
             ],
-            'response' => 'OK:'.count($newHashes)."\r\n",
+            // ACK already-stored punches too, otherwise firmware may keep
+            // retrying a perfectly valid duplicate batch forever.
+            'response' => 'OK:'.$preparedRecords->count()."\r\n",
         ];
     }
 
@@ -943,6 +1142,254 @@ class ZKTecoService
             ->where('retry_count', '<', $maxRetries)
             ->orderBy('sent_at')
             ->first();
+    }
+
+    private function canUseLegacyTimeOnly(Device $device): bool
+    {
+        if (! config('adms_pilot.enabled', false)
+            || ! config('zkteco.command_require_token', true)
+            || ! config('zkteco.legacy_time_only_enabled', false)
+            || ! $device->exists || $device->trashed()) {
+            return false;
+        }
+
+        $serial = trim((string) ($device->serial_number ?: $device->sn));
+        if ($serial === '') {
+            return false;
+        }
+
+        if (in_array($serial, config('zkteco.legacy_time_only_serials', []), true)) {
+            return true;
+        }
+
+        // No '*' wildcard: use the original, read-only registry, not all
+        // serial strings ever presented by a caller. Office UA300 is the
+        // single explicitly provisioned nonhistorical test terminal.
+        if (! config('zkteco.legacy_time_only_all_registered', false)) {
+            return false;
+        }
+
+        if ($serial === 'BZD5261200843') {
+            return true;
+        }
+
+        try {
+            return Cache::store('file')->remember(
+                'adms:clock-roster:'.hash('sha256', $serial),
+                300,
+                static fn (): bool => DB::connection('legacy_sqlsrv')
+                    ->table('dbo.Device')
+                    ->where('DeviceSerialNumber', $serial)
+                    ->exists()
+            );
+        } catch (\Throwable $e) {
+            Log::warning('Clock sync roster lookup failed; denying time command', [
+                'serial' => $serial,
+                'exception_class' => get_class($e),
+            ]);
+            return false;
+        }
+    }
+
+    /**
+     * Returns exactly a date/time command and no operational command from the
+     * shared queue. Cache throttling prevents repeated clock changes on polls.
+     */
+    private function unverifiedLegacyClockCommand(Device $device): ?string
+    {
+        if (! $this->canUseLegacyTimeOnly($device)) {
+            return null;
+        }
+
+        $serial = trim((string) ($device->serial_number ?: $device->sn));
+        $key = 'adms:legacy-clock-only:'.hash('sha256', $serial);
+        $cooldown = max(60, (int) config('zkteco.legacy_time_only_interval_seconds', 300));
+
+        if (! Cache::store('file')->add($key, true, $cooldown)) {
+            return null;
+        }
+
+        // Unix seconds fits the device's 32-bit command ID until year 2038.
+        // This is an ID ONLY; DateTime uses ZKTeco's Appendix 5 encoding.
+        $commandId = (string) now()->timestamp;
+        Cache::store('file')->put($key.':reply-id', $commandId, $cooldown);
+
+        return 'C:'.$commandId.':SET OPTIONS DateTime='
+            .$this->systemClockService->encodeForPushCommand();
+    }
+
+    private function acceptTimeOnlyAcknowledgement(Device $device, array $context): bool
+    {
+        if (! $this->canUseLegacyTimeOnly($device)) {
+            return false;
+        }
+
+        $serial = trim((string) ($device->serial_number ?: $device->sn));
+        $key = 'adms:legacy-clock-only:'.hash('sha256', $serial).':reply-id';
+        $expected = (string) Cache::store('file')->get($key, '');
+        if ($expected === '') {
+            return false;
+        }
+
+        $records = $this->extractCommandReplyRecords($context);
+        foreach ($records as $record) {
+            $id = trim((string) ($record['ID'] ?? $record['CmdID'] ?? ''));
+            $command = strtoupper(trim((string) ($record['CMD'] ?? $record['Command'] ?? '')));
+            if ($id !== '' && hash_equals($expected, $id)
+                && in_array($command, ['SET OPTIONS', 'SET OPTION'], true)) {
+                Cache::store('file')->forget($key);
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Scoped one-shot retroactive read from one original ZKTeco terminal.
+     * A public-HTTP serial is NOT proof of device identity: this exception
+     * only requests ATTLOG and never authorizes ordinary device commands.
+     */
+    private function unverifiedHistoricalAttendanceQuery(Device $device): ?string
+    {
+        if (! config('adms_pilot.enabled', false)
+            || ! config('zkteco.attlog_backfill_enabled', false)
+            || ! config('zkteco.command_require_token', true)
+            || ! $device->exists || $device->trashed()) {
+            return null;
+        }
+
+        $serial = trim((string) ($device->serial_number ?: $device->sn));
+        if ($serial === '' || ! hash_equals(
+            (string) config('zkteco.attlog_backfill_serial', ''),
+            $serial
+        )) {
+            return null;
+        }
+
+        // Require original SQL Server registration, never unknown devices.
+        if (! DB::connection('legacy_sqlsrv')->table('dbo.Device')
+            ->where('DeviceSerialNumber', $serial)->exists()) {
+            return null;
+        }
+
+        $start = (string) config('zkteco.attlog_backfill_start', '');
+        $end = (string) config('zkteco.attlog_backfill_end', '');
+        if ($end === '') {
+            $end = $this->systemClockService->formatForDevice();
+        }
+        foreach ([$start, $end] as $value) {
+            if (! preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', $value)) {
+                return null;
+            }
+            try {
+                $date = \Carbon\CarbonImmutable::createFromFormat('!Y-m-d H:i:s', $value, 'Asia/Dubai');
+                if ($date === false || $date->format('Y-m-d H:i:s') !== $value) {
+                    return null;
+                }
+            } catch (\Throwable) {
+                return null;
+            }
+        }
+        if ($start > $end) {
+            return null;
+        }
+
+        // A fixed end date is needed for a stable one-off cache key.
+        // An omitted end uses a fixed 23:59:59 of today's UAE date.
+        if ((string) config('zkteco.attlog_backfill_end', '') === '') {
+            $end = substr($end, 0, 10).' 23:59:59';
+        }
+
+        $key = 'adms:attendance-history-query:'.hash('sha256', $serial.'|'.$start.'|'.$end);
+        $cache = Cache::store('file');
+        if (! $cache->add($key.':issued', true, 14 * 86400)) {
+            return null;
+        }
+
+        // A positive int <= 2^31-1, distinct from hourly clock command IDs.
+        $commandId = (string) (now()->timestamp - 1000000000);
+        $cache->put($key.':reply-id', $commandId, 14 * 86400);
+
+        return 'C:'.$commandId.':DATA QUERY ATTLOG StartTime='
+            .$start."\t".'EndTime='.$end;
+    }
+
+    private function acceptHistoricalAttendanceQueryReply(Device $device, array $context): bool
+    {
+        if (! config('zkteco.attlog_backfill_enabled', false)
+            || ! config('zkteco.command_require_token', true)
+            || trim((string) ($device->serial_number ?: $device->sn))
+                !== (string) config('zkteco.attlog_backfill_serial', '')) {
+            return false;
+        }
+
+        $start = (string) config('zkteco.attlog_backfill_start', '');
+        $end = (string) config('zkteco.attlog_backfill_end', '');
+        if ($end === '') {
+            $end = $this->systemClockService->now()->format('Y-m-d').' 23:59:59';
+        }
+
+        $serial = trim((string) ($device->serial_number ?: $device->sn));
+        $key = 'adms:attendance-history-query:'.hash('sha256', $serial.'|'.$start.'|'.$end);
+        $expected = (string) Cache::store('file')->get($key.':reply-id', '');
+        if ($expected === '') {
+            return false;
+        }
+
+        foreach ($this->extractCommandReplyRecords($context) as $record) {
+            $id = trim((string) ($record['ID'] ?? $record['CmdID'] ?? $record['id'] ?? ''));
+            $command = strtoupper(trim((string) ($record['CMD'] ?? $record['Command'] ?? '')));
+            if ($id !== '' && hash_equals($expected, $id) && $command === 'DATA') {
+                // Return may be a negative error code. Record the exact
+                // reply status for manual diagnostics; never delete any logs.
+                Cache::store('file')->put($key.':last-response', $record, 14 * 86400);
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function ensureAutomaticTimeSyncQueued(Device $device): void
+    {
+        if (! config('zkteco.auto_time_sync_enabled', false)) {
+            return;
+        }
+
+        $interval = max(1, (int) config('zkteco.auto_time_sync_interval_hours', 24));
+        $cutoff = now()->subHours($interval);
+
+        // Lock the device row to avoid creating duplicate time commands
+        // when concurrent polls arrive during the same second.
+        DB::transaction(function () use ($device, $cutoff): void {
+            Device::query()->whereKey($device->id)->lockForUpdate()->firstOrFail();
+
+            $alreadyQueued = $device->commands()
+                ->whereIn('command', ['SET_TIMEZONE', 'UPDATE_TIME'])
+                ->where('created_at', '>=', $cutoff)
+                ->exists();
+
+            if ($alreadyQueued) {
+                return;
+            }
+
+            $this->deviceService->queueDeviceCommand(
+                $device->id,
+                'SET_TIMEZONE',
+                [
+                    'option' => 'TimeZone',
+                    'value' => $this->systemClockService->deviceTimezoneOption(),
+                ],
+                'Automatic authenticated device timezone sync'
+            );
+            $this->deviceService->queueDeviceCommand(
+                $device->id,
+                'UPDATE_TIME',
+                ['sync_on_dispatch' => true],
+                'Automatic authenticated device date/time sync'
+            );
+        });
     }
 
     private function ensureAutomaticEmployeePullQueued(Device $device): void
@@ -1175,10 +1622,24 @@ class ZKTecoService
 
     private function resolveOptionTimezone(): string
     {
-        $configured = config('zkteco.option_timezone');
+        $configured = trim((string) config('zkteco.option_timezone', ''));
 
-        if ($configured !== null && trim((string) $configured) !== '') {
-            return trim((string) $configured);
+        if (preg_match('/^([+-])(\d{1,2}):(\d{2})$/', $configured, $parts)) {
+            $hours = (int) $parts[2];
+            $minutes = (int) $parts[3];
+
+            if ($hours <= 14 && $minutes < 60) {
+                return sprintf('%s%02d:%02d', $parts[1], $hours, $minutes);
+            }
+        }
+
+        // Backwards compatible with previously deployed TimeZone=4 setting.
+        // The ZKTeco PUSH protocol expects TimeZone=+04:00 instead of "4".
+        if (preg_match('/^([+-]?)(\d{1,2})$/', $configured, $parts)) {
+            $hours = (int) $parts[2];
+            if ($hours <= 14) {
+                return sprintf('%s%02d:00', $parts[1] === '-' ? '-' : '+', $hours);
+            }
         }
 
         return $this->systemClockService->deviceTimezoneOption();

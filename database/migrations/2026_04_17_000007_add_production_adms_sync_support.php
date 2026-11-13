@@ -62,13 +62,19 @@ return new class extends Migration
             }
         });
 
+        // SQL Server requires NO ACTION here: RESTRICT is invalid SQL
+        // Server syntax, and SET NULL creates multiple cascade paths via
+        // devices -> device_syncs -> device_commands.
+        // Create nullable columns separately from foreign keys so a failed
+        // earlier migration can resume without losing its partially added
+        // columns or silently skipping the missing constraints.
         Schema::table('device_commands', function (Blueprint $table): void {
             if (! Schema::hasColumn('device_commands', 'device_sync_id')) {
-                $table->foreignId('device_sync_id')->nullable()->after('device_id')->constrained('device_syncs')->nullOnDelete();
+                $table->foreignId('device_sync_id')->nullable()->after('device_id');
             }
 
             if (! Schema::hasColumn('device_commands', 'employee_id')) {
-                $table->foreignId('employee_id')->nullable()->after('device_sync_id')->constrained('employees')->nullOnDelete();
+                $table->foreignId('employee_id')->nullable()->after('device_sync_id');
             }
 
             if (! Schema::hasColumn('device_commands', 'fingerprint')) {
@@ -83,6 +89,27 @@ return new class extends Migration
                 $table->timestamp('failed_at')->nullable()->after('expires_at');
             }
         });
+
+        foreach ([
+            'device_commands_device_sync_id_foreign' => ['device_sync_id', 'device_syncs'],
+            'device_commands_employee_id_foreign' => ['employee_id', 'employees'],
+        ] as $constraintName => [$column, $referencedTable]) {
+            $present = DB::selectOne(
+                "SELECT COUNT(*) AS total FROM sys.foreign_keys
+                 WHERE parent_object_id = OBJECT_ID(N'adms.device_commands')
+                   AND name = ?",
+                [$constraintName]
+            );
+
+            if ((int) ($present->total ?? 0) === 0) {
+                // SQL Server defaults to ON DELETE NO ACTION / ON UPDATE NO ACTION.
+                // The established FK name is preserved to make retries safe.
+                Schema::table('device_commands', function (Blueprint $table) use ($constraintName, $column, $referencedTable): void {
+                    $table->foreign($column, $constraintName)
+                        ->references('id')->on($referencedTable);
+                });
+            }
+        }
 
         Schema::table('devices', function (Blueprint $table): void {
             if (! Schema::hasColumn('devices', 'pending_full_resync')) {
@@ -102,26 +129,52 @@ return new class extends Migration
             }
         });
 
-        Schema::table('employees', function (Blueprint $table): void {
-            // Filtered unique index is created below for SQL Server nullable sync_uid.
-            $table->index(['sync_enabled', 'status'], 'employees_sync_enabled_status_index');
-            $table->index(['status', 'last_sync_validated_at'], 'employees_sync_validated_index');
-        });
+        // SQL Server may commit earlier DDL before a later operation fails.
+        // A retry must not fail on already-created indexes.
+        $indexMissing = static function (string $table, string $index): bool {
+            $found = DB::selectOne(
+                "SELECT COUNT(*) AS total FROM sys.indexes
+                 WHERE object_id = OBJECT_ID(?) AND name = ?",
+                ['adms.'.$table, $index]
+            );
 
-        DB::statement(
-            'CREATE UNIQUE INDEX [employees_sync_uid_unique] ON [dbo].[employees] ([sync_uid]) '
-            .'WHERE [sync_uid] IS NOT NULL'
-        );
+            return (int) ($found->total ?? 0) === 0;
+        };
 
-        Schema::table('device_commands', function (Blueprint $table): void {
-            $table->index(['device_id', 'fingerprint', 'status'], 'device_commands_fingerprint_status_index');
-            $table->index(['status', 'expires_at'], 'device_commands_expiration_index');
-            $table->index(['device_sync_id', 'status'], 'device_commands_sync_status_index');
-        });
+        if ($indexMissing('employees', 'employees_sync_enabled_status_index')) {
+            Schema::table('employees', static function (Blueprint $table): void {
+                $table->index(['sync_enabled', 'status'], 'employees_sync_enabled_status_index');
+            });
+        }
+        if ($indexMissing('employees', 'employees_sync_validated_index')) {
+            Schema::table('employees', static function (Blueprint $table): void {
+                $table->index(['status', 'last_sync_validated_at'], 'employees_sync_validated_index');
+            });
+        }
+        if ($indexMissing('employees', 'employees_sync_uid_unique')) {
+            DB::statement(
+                'CREATE UNIQUE INDEX [employees_sync_uid_unique] ON [adms].[employees] ([sync_uid]) '
+                .'WHERE [sync_uid] IS NOT NULL'
+            );
+        }
 
-        Schema::table('devices', function (Blueprint $table): void {
-            $table->index(['pending_full_resync', 'status'], 'devices_resync_status_index');
-        });
+        foreach ([
+            'device_commands_fingerprint_status_index' => ['device_id', 'fingerprint', 'status'],
+            'device_commands_expiration_index' => ['status', 'expires_at'],
+            'device_commands_sync_status_index' => ['device_sync_id', 'status'],
+        ] as $name => $columns) {
+            if ($indexMissing('device_commands', $name)) {
+                Schema::table('device_commands', static function (Blueprint $table) use ($columns, $name): void {
+                    $table->index($columns, $name);
+                });
+            }
+        }
+
+        if ($indexMissing('devices', 'devices_resync_status_index')) {
+            Schema::table('devices', static function (Blueprint $table): void {
+                $table->index(['pending_full_resync', 'status'], 'devices_resync_status_index');
+            });
+        }
     }
 
     public function down(): void
@@ -136,7 +189,7 @@ return new class extends Migration
             $table->dropIndex('device_commands_sync_status_index');
         });
 
-        DB::statement('DROP INDEX [employees_sync_uid_unique] ON [dbo].[employees]');
+        DB::statement('DROP INDEX [employees_sync_uid_unique] ON [adms].[employees]');
         Schema::table('employees', function (Blueprint $table): void {
             $table->dropIndex('employees_sync_enabled_status_index');
             $table->dropIndex('employees_sync_validated_index');

@@ -35,17 +35,46 @@ RUN mkdir -p storage/app/public storage/framework/cache/data storage/framework/s
   && php -l app/Console/Commands/InspectLegacySqlServerCommand.php \
   && php -l app/Console/Commands/AuditLegacyAttendanceCommand.php \
   && php -l app/Http/Controllers/Admin/LegacyAttendanceController.php \
+  && php -l app/Http/Controllers/Admin/LegacyAttendanceReportController.php \
+  && php -l app/Http/Controllers/Admin/LegacyDirectoryController.php \
+  && php -l app/Http/Controllers/Admin/LegacyFleetController.php \
+  && php -l database/migrations/2026_11_12_000002_add_license_requirement_to_adms_devices.php \
   && php -l app/Console/Commands/InspectLegacyAttendanceWriteReadinessCommand.php \
+  && php -l app/Console/Commands/ImportMissingHiliAttendanceCommand.php \
+  && php -l app/Console/Commands/CheckBioCloudUICommand.php \
+  && php -l app/Http/Controllers/Admin/ZenHrIntegrationController.php \
+  && php -l app/Console/Commands/CheckZenHrReadinessCommand.php \
+  && php -l app/Services/ZenHrOAuthService.php \
+  && php -l config/zenhr.php \
+  && php -l config/adms_instance.php \
+  && php -l app/Http/Middleware/AdmsInstanceRoleGate.php \
+  && php -l app/Console/Commands/CollectZenHrAttendanceCommand.php \
+  && php -l app/Console/Commands/CheckAdmsSplitReadinessCommand.php \
+  && php -l app/Services/ZenHrAttendanceOutbox.php \
   && php -l app/Services/LegacyAttendanceWriter.php \
   && php -l app/Services/LegacyAttendanceValueMapper.php \
   && php -l app/Services/LegacyDashboardService.php \
   && php -l config/legacy_attendance.php \
   && php -l config/database.php \
   && php -l app/Console/Commands/AuditSqlServerOnlyApplicationCommand.php \
+  && php -l app/Http/Controllers/Admin/DeviceConnectionStatusController.php \
+  && php -l app/Console/Commands/ProvisionOfficeTestDeviceCommand.php \
+  && php -l app/Console/Commands/ProvisionLegacyDevicesCommand.php \
+  && php -l app/Http/Controllers/Admin/CommandController.php \
+  && php -l app/Http/Middleware/AdmsPilotGate.php \
+  && php -l app/Services/ZKTecoService.php \
+  && php -l app/Services/ZKTecoCommandFormatter.php \
+  && php -l app/Services/SystemClockService.php \
+  && php -l app/Http/Controllers/IclockController.php \
+  && php -l config/zkteco.php \
+  && php -l app/Services/LegacyAttendanceWriter.php \
+  && php -l config/legacy_attendance.php \
+  && php -l database/migrations/2026_04_17_000007_add_production_adms_sync_support.php \
   && chown -R www-data:www-data storage bootstrap/cache
 COPY docker/nginx.conf /etc/nginx/sites-available/default
 COPY docker/supervisord.conf /etc/supervisor/conf.d/superfix-adms.conf
 COPY docker/entrypoint.sh /usr/local/bin/superfix-entrypoint
+COPY docker/zenhr-outbox-worker.sh /usr/local/bin/zenhr-outbox-worker
 RUN chmod 0755 /usr/local/bin/superfix-entrypoint && nginx -t
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 CMD curl -fsS -o /dev/null http://127.0.0.1:8080/api/health || exit 1

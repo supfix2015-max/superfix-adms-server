@@ -61,12 +61,45 @@ return [
     'command_retry_after_seconds' => (int) env('ZKTECO_COMMAND_RETRY_AFTER_SECONDS', 30),
     'command_max_retries' => (int) env('ZKTECO_COMMAND_MAX_RETRIES', 3),
     'dispatch_commands' => env('ZKTECO_DISPATCH_COMMANDS', ! in_array(env('APP_ENV', 'production'), ['staging', 'testing'], true)),
+    // Require per-device token before sending commands/reconciling callbacks,
+    // even when a legacy terminal is temporarily allowed to upload attendance
+    // by historical serial alone (HTTP is unencrypted).
+    'command_require_token' => filter_var(env('ZKTECO_COMMAND_REQUIRE_TOKEN', true), FILTER_VALIDATE_BOOLEAN),
+    // Automatic SET OPTION TimeZone / DateTime requires authenticated
+    // /iclock/getrequest polls; never available for serial-only HTTP clients.
+    'auto_time_sync_enabled' => filter_var(env('ZKTECO_AUTO_TIME_SYNC_ENABLED', false), FILTER_VALIDATE_BOOLEAN),
+    'auto_time_sync_interval_hours' => max(1, (int) env('ZKTECO_AUTO_TIME_SYNC_INTERVAL_HOURS', 24)),
+    // Time-only exception for pre-token ADMS devices on HTTP.
+    // Opt in to specific pilot serials. NEVER grants access to queued
+    // biometric, reboot, deletion, enrollment or other commands.
+    'legacy_time_only_enabled' => filter_var(env('ZKTECO_LEGACY_TIME_ONLY_ENABLED', false), FILTER_VALIDATE_BOOLEAN),
+    // Opt-in all existing original dbo.Device serials plus the registered
+    // office UA300, rather than a manually maintained comma-separated list.
+    // This is NOT a blanket authorization for unknown devices.
+    'legacy_time_only_all_registered' => filter_var(env('ZKTECO_LEGACY_TIME_ONLY_ALL_REGISTERED', false), FILTER_VALIDATE_BOOLEAN),
+    'legacy_time_only_serials' => array_values(array_filter(array_map('trim', explode(',', (string) env('ZKTECO_LEGACY_TIME_ONLY_SERIALS', ''))))),
+    'legacy_time_only_interval_seconds' => max(60, (int) env('ZKTECO_LEGACY_TIME_ONLY_INTERVAL_SECONDS', 300)),
+    // Deliberate ONE-device retrospective ATTLOG query. Never a full fleet
+    // command, and never transmits template/user-delete/reboot commands.
+    'attlog_backfill_enabled' => filter_var(env('ZKTECO_ATTLOG_BACKFILL_ENABLED', false), FILTER_VALIDATE_BOOLEAN),
+    'attlog_backfill_serial' => trim((string) env('ZKTECO_ATTLOG_BACKFILL_SERIAL', '')),
+    'attlog_backfill_start' => trim((string) env('ZKTECO_ATTLOG_BACKFILL_START', '')),
+    'attlog_backfill_end' => trim((string) env('ZKTECO_ATTLOG_BACKFILL_END', '')),
+    // Keep historical punches from before the known device-clock repair
+    // in adms.attendance_logs for review instead of silently inserting
+    // shifted timestamps into dbo.Attendance.
+    'attlog_backfill_review_before' => trim((string) env('ZKTECO_ATTLOG_BACKFILL_REVIEW_BEFORE', '')),
+
+
     'auto_pull_employees_on_contact' => env('ZKTECO_AUTO_PULL_EMPLOYEES_ON_CONTACT', false),
     'auto_pull_employees_cooldown_minutes' => (int) env('ZKTECO_AUTO_PULL_EMPLOYEES_COOLDOWN_MINUTES', 15),
     'auto_cleanup_legacy_users' => env('ZKTECO_AUTO_CLEANUP_LEGACY_USERS', false),
     'system_timezone' => env('ZKTECO_SYSTEM_TIMEZONE'),
     'device_timezone' => env('ZKTECO_DEVICE_TIMEZONE', env('APP_TIMEZONE', 'UTC')),
     'option_timezone' => env('ZKTECO_OPTION_TIMEZONE'),
+    // Some ZKTeco PUSH firmwares honor SyncTime during options handshake;
+    // set to 3600 for hourly clock sync only after testing device firmware.
+    'option_sync_time_seconds' => max(0, (int) env('ZKTECO_OPTION_SYNC_TIME_SECONDS', 0)),
     'option_stamp' => (string) env('ZKTECO_OPTION_STAMP', '9999'),
     'option_op_stamp' => (string) env('ZKTECO_OPTION_OPSTAMP', '9999'),
     'option_error_delay' => (string) env('ZKTECO_OPTION_ERROR_DELAY', '60'),

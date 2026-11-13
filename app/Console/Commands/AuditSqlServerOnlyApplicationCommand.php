@@ -4,73 +4,85 @@ namespace App\Console\Commands;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Schema;
 use Throwable;
 
 class AuditSqlServerOnlyApplicationCommand extends Command
 {
     protected $signature = 'adms:sqlserver-only-audit';
 
-    protected $description = 'Read-only readiness audit for the SQL Server-only operational Laravel database';
+    protected $description = 'Read-only check: SQL Server Att2000_V4 historical dbo and isolated adms schema';
 
     public function handle(): int
     {
         try {
-            $default = config('database.default');
-            $operationalDriver = config('database.connections.sqlsrv.driver');
-            $historicalDriver = config('database.connections.legacy_sqlsrv.driver');
-            if ($default !== 'sqlsrv' || $operationalDriver !== 'sqlsrv' || $historicalDriver !== 'sqlsrv') {
-                $this->error('Operational and historical database connections must both use SQL Server.');
+            if (config('database.default') !== 'sqlsrv'
+                || config('database.connections.sqlsrv.driver') !== 'sqlsrv'
+                || config('database.connections.legacy_sqlsrv.driver') !== 'sqlsrv'
+                || strcasecmp((string) config('database.connections.sqlsrv.schema'), 'adms') !== 0) {
+                $this->error('Unsafe default connection or app schema. Expected SQL Server and adms.');
                 return self::FAILURE;
             }
 
-            // Configurations registered by older images or packages do not
-            // prove that Laravel is USING a MySQL database. Audit the actual
-            // selected and connected drivers instead of failing on their names.
-            $unusedDrivers = array_values(array_intersect(
-                ['mysql', 'mariadb'], array_keys(config('database.connections', []))
-            ));
-            if ($unusedDrivers !== []) {
-                $this->warn('Unused MySQL/MariaDB connection definitions remain in the runtime config: '
-                    .implode(', ', $unusedDrivers).'. Verify the deployed config/database.php image version.');
-            }
-
-            $operational = DB::connection('sqlsrv');
+            $app = DB::connection('sqlsrv');
             $legacy = DB::connection('legacy_sqlsrv');
+            $a = $app->selectOne('SELECT DB_NAME() AS db, SCHEMA_NAME() AS schema_name');
+            $h = $legacy->selectOne('SELECT DB_NAME() AS db');
 
-            $operationalName = (string) ($operational->selectOne('SELECT DB_NAME() AS name')->name ?? '');
-            $historicalName = (string) ($legacy->selectOne('SELECT DB_NAME() AS name')->name ?? '');
-
-            if ($operationalName === '' || strcasecmp($operationalName, $historicalName) === 0) {
-                $this->error('Unsafe configuration: original database and Laravel operational database must be distinct.');
+            if (strcasecmp((string) ($a->db ?? ''), 'Att2000_V4') !== 0
+                || strcasecmp((string) ($a->db ?? ''), (string) ($h->db ?? '')) !== 0
+                || strcasecmp((string) ($a->schema_name ?? ''), 'adms') !== 0) {
+                $this->error('UNSAFE: app must use Att2000_V4 with login DEFAULT_SCHEMA=adms.');
                 return self::FAILURE;
             }
 
-            $this->table(['Source', 'Database'], [
-                ['Default connection', $default],
-                ['Laravel operations (SQL Server)', $operationalName],
-                ['Original historical source (SQL Server)', $historicalName],
+            $expectedHistorical = ['Employee', 'Attendance', 'Device', 'EmployeeTemplate'];
+            $existingHistorical = $legacy->select(
+                "SELECT t.name FROM sys.tables t JOIN sys.schemas s ON s.schema_id=t.schema_id WHERE s.name=N'dbo' AND t.name IN (N'Employee',N'Attendance',N'Device',N'EmployeeTemplate')"
+            );
+            $names = array_map(static fn (object $row): string => strtolower((string) $row->name), $existingHistorical);
+            foreach ($expectedHistorical as $table) {
+                if (! in_array(strtolower($table), $names, true)) {
+                    $this->error('Expected dbo historical source table missing: '.$table);
+                    return self::FAILURE;
+                }
+            }
+
+            $dboRead = $app->selectOne(
+                "SELECT
+                 HAS_PERMS_BY_NAME(N'dbo.Attendance', N'OBJECT', N'INSERT') AS can_insert,
+                 HAS_PERMS_BY_NAME(N'dbo.Attendance', N'OBJECT', N'UPDATE') AS can_update,
+                 HAS_PERMS_BY_NAME(N'dbo.Attendance', N'OBJECT', N'DELETE') AS can_delete"
+            );
+            if ((int) ($dboRead->can_insert ?? 0) === 1
+                || (int) ($dboRead->can_update ?? 0) === 1
+                || (int) ($dboRead->can_delete ?? 0) === 1) {
+                $this->error('UNSAFE: app login has write rights on historical dbo.Attendance.');
+                return self::FAILURE;
+            }
+
+            $appTables = $app->select(
+                "SELECT t.name FROM sys.tables t JOIN sys.schemas s ON s.schema_id=t.schema_id WHERE s.name=N'adms' ORDER BY t.name"
+            );
+            $present = array_map(static fn (object $t): string => strtolower((string) $t->name), $appTables);
+            $expected = ['migrations', 'users', 'devices', 'employees', 'attendance_logs',
+                'device_commands', 'raw_logs', 'jobs', 'employee_biometrics'];
+            $this->table(['Item', 'Value'], [
+                ['SQL Server database', $a->db],
+                ['App default schema', $a->schema_name],
+                ['Historical source', 'dbo.* (read-only via legacy login)'],
+                ['Original historical tables found', count($names)],
+                ['App tables found', count($present)],
+                ['App account may write historical attendance', 'NO'],
             ]);
-
-            $tables = [
-                'users', 'devices', 'employees', 'attendance_logs',
-                'device_commands', 'raw_logs', 'employee_biometrics',
-                'biometric_templates', 'jobs', 'failed_jobs', 'migrations',
-            ];
-
-            $this->table(['Operational table', 'Present'], array_map(
-                static fn (string $table): array => [
-                    $table,
-                    Schema::connection('sqlsrv')->hasTable($table) ? 'YES' : 'NO',
-                ],
-                $tables
+            $this->table(['App schema table (adms.*)', 'Exists'], array_map(
+                static fn (string $name): array => [$name, in_array($name, $present, true) ? 'YES' : 'NO'],
+                $expected
             ));
-
-            $this->info('Read-only audit complete: no data modified, no MySQL connection queried.');
+            $this->info('Read-only audit finished. Database and source records unchanged.');
             return self::SUCCESS;
         } catch (Throwable $e) {
             report($e);
-            $this->error('SQL Server operational database is not ready or unreachable. No data modified.');
+            $this->error('Could not audit SQL Server schema safely. No data modified.');
             return self::FAILURE;
         }
     }

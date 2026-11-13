@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\Device;
 use App\Models\Employee;
+use App\Http\Controllers\Admin\LegacyFleetController;
 use App\Repositories\DeviceRepository;
 use App\Services\DeviceService;
 use Illuminate\Http\Request;
@@ -18,6 +19,13 @@ class DeviceController extends Controller
 
     public function index(Request $request)
     {
+        // Present the combined original-SQL + operational fleet at the
+        // established /admin/devices URL. Previously the new fleet view
+        // was hidden at /admin/fleet while /admin/devices stayed obsolete.
+        if (config('legacy_attendance.browser_enabled', false)) {
+            return app(LegacyFleetController::class)->index($request);
+        }
+
         $filters = [
             'search' => $request->input('search'),
             'status' => $request->input('status'),
@@ -109,14 +117,28 @@ class DeviceController extends Controller
     {
         $validated = $request->validate([
             'name' => 'required|string|max:255',
-            'ip_address' => 'required|ip',
-            'port' => 'integer|between:1,65535',
+            'ip_address' => 'nullable|ip',
+            'port' => 'nullable|integer|between:1,65535',
+            'requires_license' => 'required|boolean',
         ]);
 
+        // Only the operational adms.devices row is updated; the original
+        // dbo.Device serial and identity are immutable in this workflow.
+        $column = \Illuminate\Support\Facades\DB::connection('sqlsrv')->selectOne(
+            "SELECT COL_LENGTH(N'adms.devices', N'requires_license') AS field_length"
+        );
+        if ($column === null || $column->field_length === null) {
+            // Device alias and endpoint edits remain valid even while DBA
+            // prepares the optional licensing flag schema migration.
+            unset($validated['requires_license']);
+        }
         $this->deviceService->updateDevice($device->id, $validated);
 
-        return redirect()->route('admin.devices.show', $device)
-            ->with('success', 'Device updated successfully');
+        return redirect()->route(
+            config('legacy_attendance.browser_enabled', false)
+                ? 'admin.fleet.index' : 'admin.devices.show',
+            config('legacy_attendance.browser_enabled', false) ? [] : [$device]
+        )->with('success', 'Operational device settings saved. No physical command sent.');
     }
 
     public function destroy(Device $device)
@@ -136,9 +158,24 @@ class DeviceController extends Controller
 
     public function queueCommand(Request $request, Device $device)
     {
+        if (! config('adms_pilot.enabled', false)
+            || ! config('zkteco.dispatch_commands', false)
+            || ! config('zkteco.command_require_token', true)) {
+            return back()->withErrors([
+                'command' => 'Remote commands require the authenticated device-command pilot and dispatch enabled.',
+            ]);
+        }
+
         $validated = $request->validate([
 'command' => 'required|string|in:REBOOT,UPDATE_TIME,CLEAR_LOGS,ClearAdmin,ENABLE_ATTENDANCE,PULL_EMPLOYEES,PULL_ATTENDANCE,RM_ADMIN_PRIVILEGE',
         ]);
+
+        if (in_array($validated['command'], ['REBOOT', 'CLEAR_LOGS', 'ClearAdmin', 'RM_ADMIN_PRIVILEGE'], true)
+            && $request->input('confirm_sensitive') !== 'yes') {
+            return back()->withErrors([
+                'confirm_sensitive' => 'This action affects the physical terminal. Confirm it explicitly.',
+            ]);
+        }
 
         if ($validated['command'] === 'UPDATE_TIME') {
             [$timezoneCommand, $timeCommand] = $this->deviceService->queueTimeSync($device->id);
@@ -156,6 +193,14 @@ class DeviceController extends Controller
 
     public function pullData(Request $request, Device $device)
     {
+        if (! config('adms_pilot.enabled', false)
+            || ! config('zkteco.dispatch_commands', false)
+            || ! config('zkteco.command_require_token', true)) {
+            return back()->withErrors([
+                'dataset' => 'Device pulls require authenticated command dispatch. Live attendance reception remains enabled.',
+            ]);
+        }
+
         $validated = $request->validate([
             'dataset' => 'required|string|in:employees,attendance',
         ]);

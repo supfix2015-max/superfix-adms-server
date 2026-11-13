@@ -25,12 +25,11 @@ class LegacyAttendanceWriter
             return 0;
         }
 
-        $serial = trim((string) $device->serial_number);
-        $allowedSerials = config('legacy_attendance.attendance_write_serials', []);
-
-        if ($serial === '' || $allowedSerials === [] || ! in_array($serial, $allowedSerials, true)) {
-            // Never ACK a terminal that was mistakenly cut over without SQL write support.
-            throw new RuntimeException('Device is not allowlisted for original SQL Server attendance writes.');
+        if (! $this->canWriteFor($device)) {
+            // This method is reserved for approved original SQL writers.
+            // The receiver checks canWriteFor() first and stages unapproved
+            // terminals in adms instead of returning retry-inducing HTTP 500.
+            throw new RuntimeException('Device is not allowed for original SQL Server attendance writes.');
         }
 
         if (trim((string) config('database.connections.legacy_sqlsrv_writer.username')) === '') {
@@ -61,6 +60,14 @@ class LegacyAttendanceWriter
                     'One or more device badge numbers are absent from Att2000_V4.Employee. No SQL Server punch was written.'
                 );
             }
+        }
+
+        // Use the verified DEVICE serial consistently for deduplication and
+        // the original dbo.Attendance device identity. Previously $serial was
+        // never initialized in persist(), causing live Hili writes to fail.
+        $serial = trim((string) $device->serial_number);
+        if ($serial === '') {
+            throw new RuntimeException('Approved attendance writer has no device serial.');
         }
 
         $db = DB::connection('legacy_sqlsrv_writer');
@@ -135,6 +142,39 @@ class LegacyAttendanceWriter
         }
 
         return $inserted;
+    }
+
+
+    /**
+     * Read-only device gate for the ingestion path.
+     * Original SQL writes are limited to explicitly approved serial numbers
+     * or (only with a separate opt-in) exact legacy-registered serials.
+     *
+     * Non-approved terminals are still permitted to stage their accepted
+     * ATTLOG records in adms; they must not be sent to dbo.Attendance.
+     */
+    public function canWriteFor(Device $device): bool
+    {
+        if (! config('legacy_attendance.attendance_write_enabled', false)) {
+            return false;
+        }
+
+        $serial = trim((string) $device->serial_number);
+        $allowedSerials = config('legacy_attendance.attendance_write_serials', []);
+        if ($serial !== '' && in_array($serial, $allowedSerials, true)) {
+            return true;
+        }
+
+        if ($serial === ''
+            || ! config('legacy_attendance.attendance_write_all_registered', false)
+            || ! preg_match('/^[A-Za-z0-9._:-]{1,64}$/', $serial)) {
+            return false;
+        }
+
+        return DB::connection('legacy_sqlsrv')
+            ->table('dbo.Device')
+            ->where('DeviceSerialNumber', $serial)
+            ->exists();
     }
 
     private function assertSchemaCompatible($db): void
