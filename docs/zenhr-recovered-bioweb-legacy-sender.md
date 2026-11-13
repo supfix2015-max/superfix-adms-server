@@ -122,3 +122,14 @@ Existing ZenHR daily records are NOT an exact raw-punch
 deduplication oracle. User explicitly accepts temporary
 duplicates or missing records during the migration,
 with later HR correction if needed.
+
+## Values verified on the old Windows server (2026-11-13)
+
+User ran a values-only PowerShell read from `BioWeb/settings.json`:
+- `MySettings.AttendanceId = 18166`
+- `MySettings.BranchId = 17787`
+- `MySettings.TimezoneOffset = ""` (empty in legacy config)
+
+Use `ZENHR_ATTENDANCE_TRANSACTION_ID=18166` in Coolify, and `ZENHR_ATTENDANCE_BRANCH_ID=17787`. **Do not inherit the empty offset** into new bulk requests: punch timestamps originate in UAE local time, and the documented ZenHR bulk endpoint interprets missing timezone as UTC. Explicit `+0400` is a deliberate normalization to check during the one-record pilot.
+
+Keep `ZENHR_ATTENDANCE_POST_ENABLED=false` during dry run. This branch does not yet start an unattended sender.
