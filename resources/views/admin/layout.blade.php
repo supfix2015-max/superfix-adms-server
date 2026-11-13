@@ -146,7 +146,7 @@
     <link href="https://fonts.bunny.net/css?family=plus-jakarta-sans:400,500,600,700,800|instrument-sans:400,500,600,700" rel="stylesheet" />
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
-    <link rel="stylesheet" href="{{ asset('enterprise-ui.css') }}">
+    <link rel="stylesheet" href="/enterprise-ui.css?v={{ filemtime(public_path('enterprise-ui.css')) }}">
     @yield('extra_css')
     @stack('extra_css')
 </head>
