@@ -88,6 +88,23 @@
         ],
     ];
 
+    // The ZenHR connector belongs to AT2 only; never show it in AT1.
+    if (config('zenhr.enabled', false) && request()->getHost() === 'at2.superfix.ae') {
+        $navGroups[] = [
+            'id' => 'integrations',
+            'label' => 'Integrations',
+            'icon' => 'bi-plug',
+            'children' => [
+                [
+                    'label' => 'ZenHR',
+                    'icon' => 'bi-cloud-check',
+                    'route' => route('admin.zenhr.index'),
+                    'matches' => ['admin.zenhr.*'],
+                ],
+            ],
+        ];
+    }
+
     $isActiveNavLeaf = static function (array $item): bool {
         if (empty($item['matches']) || ! request()->routeIs(...$item['matches'])) {
             return false;
