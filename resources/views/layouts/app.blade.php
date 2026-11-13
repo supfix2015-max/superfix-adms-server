@@ -14,7 +14,7 @@
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
     <link href="https://cdn.datatables.net/1.11.4/css/dataTables.bootstrap5.min.css" rel="stylesheet">
     <link href="https://cdn.datatables.net/buttons/2.2.2/css/buttons.bootstrap5.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="{{ asset('enterprise-ui.css') }}">
+    <link rel="stylesheet" href="/enterprise-ui.css?v={{ filemtime(public_path('enterprise-ui.css')) }}">
     @yield('extra_css')
     @stack('extra_css')
 </head>
