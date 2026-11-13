@@ -31,5 +31,8 @@ return [
     'attendance_transaction_id' => (int) env('ZENHR_ATTENDANCE_TRANSACTION_ID', 0),
     // Fail closed: interactive --apply AND this server-side opt-in required.
     'attendance_post_enabled' => filter_var(env('ZENHR_ATTENDANCE_POST_ENABLED', false), FILTER_VALIDATE_BOOLEAN),
-    'attendance_sync_enabled' => false, // No unattended posts; manual one-event pilot first.
+    // Independent opt-in for supervised automatic delivery. Never starts
+    // merely because manual --apply is enabled.
+    'attendance_auto_send' => filter_var(env('ZENHR_ATTENDANCE_AUTO_SEND', false), FILTER_VALIDATE_BOOLEAN),
+    'attendance_sync_enabled' => false, // Old legacy scheduled sender remains off.
 ];
