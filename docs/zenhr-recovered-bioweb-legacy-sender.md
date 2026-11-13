@@ -133,3 +133,34 @@ User ran a values-only PowerShell read from `BioWeb/settings.json`:
 Use `ZENHR_ATTENDANCE_TRANSACTION_ID=18166` in Coolify, and `ZENHR_ATTENDANCE_BRANCH_ID=17787`. **Do not inherit the empty offset** into new bulk requests: punch timestamps originate in UAE local time, and the documented ZenHR bulk endpoint interprets missing timezone as UTC. Explicit `+0400` is a deliberate normalization to check during the one-record pilot.
 
 Keep `ZENHR_ATTENDANCE_POST_ENABLED=false` during dry run. This branch does not yet start an unattended sender.
+
+## Migrated SQL StatusId=NULL fix (13 Nov 2026)
+
+The user queried the live shared SQL Server:
+- \`StatusId = NULL, Status = Check-In\`: 18 attendance rows after 12 Nov cutoff
+- \`StatusId = NULL, Status = Check-Out\`: 15 rows
+- No separate numeric StatusId in these 33 source records.
+
+Old BioWeb read \`StatusId\` directly. On **this migrated SQL database** the sender must instead:
+- Prefer known explicit \`StatusId=0\` or \`1\` when present.
+- If absent/null, map original \`dbo.Attendance.Status\` \`Check-In → 0\`,
+  \`Check-Out → 1\`.
+- For an ADMS-only punch not yet mirrored in \`dbo.Attendance\`, use its
+  normalized outbox direction when it is \`check-in\` or \`check-out\`.
+- Keep unsupported/ambiguous breaks, overtime or custom statuses
+  unsent for review. Do not alternate in/out or rewrite source SQL.
+
+Changes are in \`app/Services/ZenHrLegacyRequestType.php\` and
+\`app/Services/ZenHrLegacyAttendanceSender.php\`, with unit tests.
+The \`adms:zenhr-send-legacy\` command remains dry-run-only unless
+both \`--apply\` and \`ZENHR_ATTENDANCE_POST_ENABLED=true\` are set.
+
+Redeploy the **same branch**, then run:
+\`\`\`bash
+php -l app/Services/ZenHrLegacyRequestType.php
+php -l app/Services/ZenHrLegacyAttendanceSender.php
+php artisan adms:zenhr-connectivity
+php artisan adms:zenhr-send-legacy
+\`\`\`
+A new nonzero eligible count is expected, but must be read from
+the live command; no successful vendor attendance POST yet.
