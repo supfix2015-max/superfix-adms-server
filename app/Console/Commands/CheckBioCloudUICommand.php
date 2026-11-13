@@ -146,6 +146,7 @@ class CheckBioCloudUICommand extends Command
             'resources/views/admin/legacy/directory.blade.php' => 'Employee directory',
             'resources/views/admin/legacy/report.blade.php' => 'Attendance reports',
             'resources/views/admin/devices/edit.blade.php' => 'Device edit',
+            'resources/views/admin/integrations/zenhr.blade.php' => 'AT2 ZenHR page',
         ] as $path => $label) {
             try {
                 $compiled = Blade::compileString((string) file_get_contents(base_path($path)));
