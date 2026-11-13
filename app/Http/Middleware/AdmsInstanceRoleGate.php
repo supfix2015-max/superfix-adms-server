@@ -20,6 +20,42 @@ final class AdmsInstanceRoleGate
             return $next($request);
         }
 
+        // Single Coolify application bound to both domains:
+        // AT1 accepts ONLY device protocol, AT2 accepts ONLY console/API.
+        if ($role === 'dual') {
+            $host = strtolower($request->getHost());
+            $deviceHost = strtolower((string) config('adms_instance.device_host'));
+            $consoleHost = strtolower((string) config('adms_instance.console_host'));
+            $deviceEndpoint = $request->is('iclock', 'iclock/*', 'api/device', 'api/device/*');
+
+            // Internal container health check bypasses public Host restrictions.
+            if ($request->isMethod('GET') && $request->is('api/health')
+                && in_array($host, ['127.0.0.1', 'localhost'], true)) {
+                return $next($request);
+            }
+
+            if ($host === $deviceHost) {
+                if ($deviceEndpoint) {
+                    return $next($request);
+                }
+                if ($request->isMethod('GET') && $request->path() === '/') {
+                    return response('AT1 device gateway ready', Response::HTTP_OK)
+                        ->header('Content-Type', 'text/plain; charset=UTF-8')
+                        ->header('Cache-Control', 'no-store');
+                }
+                return response('Admin console lives on AT2', Response::HTTP_NOT_FOUND);
+            }
+
+            if ($host === $consoleHost) {
+                if ($deviceEndpoint) {
+                    return response('Device ingress lives on AT1', Response::HTTP_NOT_FOUND);
+                }
+                return $next($request);
+            }
+
+            return response('Unknown ADMS host', Response::HTTP_NOT_FOUND);
+        }
+
         if (! in_array($role, ['devices', 'console'], true)) {
             return response('ADMS instance role misconfigured', Response::HTTP_SERVICE_UNAVAILABLE);
         }
