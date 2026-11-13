@@ -141,6 +141,8 @@ class CheckBioCloudUICommand extends Command
         // without executing it, reading secrets, or writing business data.
         foreach ([
             'resources/views/admin/layout.blade.php' => 'Enterprise master layout',
+            'resources/views/layouts/app.blade.php' => 'Login base layout',
+            'resources/views/auth/login.blade.php' => 'Login form',
             'resources/views/admin/legacy/fleet.blade.php' => 'Fleet table',
             'resources/views/admin/legacy/attendance.blade.php' => 'Attendance transactions',
             'resources/views/admin/legacy/directory.blade.php' => 'Employee directory',
@@ -160,6 +162,14 @@ class CheckBioCloudUICommand extends Command
                 $fail = true;
             }
         }
+
+        $cssPath = public_path('enterprise-ui.css');
+        $cssReady = is_file($cssPath) && is_readable($cssPath)
+            && filesize($cssPath) > 0;
+        $results[] = ['Shared Enterprise CSS', $cssReady
+            ? 'OK · same-origin HTTPS path /enterprise-ui.css'
+            : 'BLOCKER · missing or unreadable public/enterprise-ui.css'];
+        $fail = $fail || ! $cssReady;
 
         // Fail the preflight if the sidebar regresses to a flat collection
         // or fails to keep commands inside their relevant collapsible group.
