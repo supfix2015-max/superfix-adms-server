@@ -19,5 +19,7 @@ return [
         'create:attendance_detail',
         'bulk_insert:attendance_detail',
     ],
-    'attendance_sync_enabled' => false, // Requires separate reviewed phase.
+    'outbox_cutoff_local' => '2026-11-12 00:00:00',
+    'outbox_auto_collect' => filter_var(env('ZENHR_OUTBOX_AUTO_COLLECT', false), FILTER_VALIDATE_BOOLEAN),
+    'attendance_sync_enabled' => false, // No vendor POSTS until branch/payload contract verified.
 ];
