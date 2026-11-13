@@ -24,5 +24,12 @@ return [
     'attendance_branch_id' => (int) env('ZENHR_ATTENDANCE_BRANCH_ID', 0),
     'outbox_cutoff_local' => '2026-11-12 00:00:00',
     'outbox_auto_collect' => filter_var(env('ZENHR_OUTBOX_AUTO_COLLECT', false), FILTER_VALIDATE_BOOLEAN),
-    'attendance_sync_enabled' => false, // No vendor POSTS until branch/payload contract verified.
+    // Original BioWeb CustomExportService uses aiapi.zenhr.com for bulk POST,
+    // whereas employee GETs and OAuth use app.zenhr.com.
+    'attendance_bulk_url' => 'https://aiapi.zenhr.com/api/v3/branches/17787/attendance_details/bulk_insert',
+    // Match the old BioWeb MySettings.AttendanceId. Must be explicitly set.
+    'attendance_transaction_id' => (int) env('ZENHR_ATTENDANCE_TRANSACTION_ID', 0),
+    // Fail closed: interactive --apply AND this server-side opt-in required.
+    'attendance_post_enabled' => filter_var(env('ZENHR_ATTENDANCE_POST_ENABLED', false), FILTER_VALIDATE_BOOLEAN),
+    'attendance_sync_enabled' => false, // No unattended posts; manual one-event pilot first.
 ];
