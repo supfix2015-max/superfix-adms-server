@@ -2,7 +2,6 @@
 
 namespace App\Services;
 
-use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use RuntimeException;
@@ -14,7 +13,8 @@ use RuntimeException;
  * - BadgeNumber == ZenHR employment_number => ZenHR employee.id
  * - request_type == int.Parse(dbo.Attendance.StatusId) on the original server
  *   but migrated SQL has nullable StatusId; map Check-In/Check-Out Status instead
- * - request_time == local VerifyTime + timezone offset (+0400)
+ * - request_time matches old BioWeb local VerifyTime (legacy TimezoneOffset empty).
+ *   Live observed +0400 caused a four-hour earlier time in ZenHR UI.
  * - attendance_transaction_id == MySettings.AttendanceId
  * - added_by == 2; bulk batches up to 10; HTTP 202 means accepted
  *
@@ -75,12 +75,19 @@ final class ZenHrLegacyAttendanceSender
                 continue;
             }
 
+            try {
+                $requestTime = ZenHrLegacyRequestTime::fromSqlLocal($time);
+            } catch (\Throwable $e) {
+                $invalidTime++;
+                continue;
+            }
+
             $valid[] = [
                 'event_key' => (string) $r->event_key,
                 'employee_id' => (int) $ids[0],
-                'request_time' => CarbonImmutable::createFromFormat(
-                    '!Y-m-d H:i:s', $time, 'Asia/Dubai'
-                )->format('Y-m-d H:i:s O'),
+                // SQL wall-clock time, no +0400: original BioWeb
+                // TimezoneOffset setting is empty and ZenHR is Abu Dhabi.
+                'request_time' => $requestTime,
                 // Do not alternate; preserve StatusId or its exact Check-In/Out equivalent.
                 'request_type' => $raw,
             ];
