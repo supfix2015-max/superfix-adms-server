@@ -62,6 +62,14 @@ class LegacyAttendanceWriter
             }
         }
 
+        // Use the verified DEVICE serial consistently for deduplication and
+        // the original dbo.Attendance device identity. Previously $serial was
+        // never initialized in persist(), causing live Hili writes to fail.
+        $serial = trim((string) $device->serial_number);
+        if ($serial === '') {
+            throw new RuntimeException('Approved attendance writer has no device serial.');
+        }
+
         $db = DB::connection('legacy_sqlsrv_writer');
         $this->assertSchemaCompatible($db);
 
