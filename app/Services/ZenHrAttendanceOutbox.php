@@ -173,9 +173,25 @@ final class ZenHrAttendanceOutbox
         int &$review,
         int &$proposed
     ): void {
-        $key = $item['event_key'];
-        if (isset($seen[$key])
-            || DB::connection('sqlsrv')->table(self::TABLE)->where('event_key', $key)->exists()) {
+        // An employee's identical timestamp is ONE punch even if two
+        // different terminals or different ZKTeco In/Out states reported it.
+        $identity = ZenHrPunchIdentity::key(
+            (string) $item['badge_number'], (string) $item['punched_at_local']
+        );
+        $key = $identity ?? $item['event_key'];
+        $alreadyStored = DB::connection('sqlsrv')->table(self::TABLE)
+            ->where(function ($q) use ($item, $identity): void {
+                $q->where('event_key', $item['event_key']);
+                if ($identity !== null) {
+                    // Also catch old v1 outbox rows that used device/direction keys.
+                    $q->orWhere(function ($same) use ($item): void {
+                        $same->where('badge_number', $item['badge_number'])
+                            ->where('punched_at_local', $item['punched_at_local']);
+                    });
+                }
+            })->exists();
+
+        if (isset($seen[$key]) || $alreadyStored) {
             $duplicate++;
             return;
         }
@@ -195,18 +211,22 @@ final class ZenHrAttendanceOutbox
         $badge = trim($badge);
         $serial = trim($serial);
         $direction = strtolower(trim($direction));
-        $allowed = ['check-in', 'check-out', 'break-out', 'break-in', 'overtime-in', 'overtime-out'];
-        $isKnown = in_array($direction, $allowed, true);
         $isHiliUncorrected = $serial === 'CEG9223661162'
             && $time < '2026-11-12 17:10:00';
 
         if ($badge === '') $badge = '[missing badge]';
         if ($serial === '') $serial = '[missing serial]';
         if ($direction === '') $direction = 'unknown';
-        $needsReview = ! $isKnown || str_starts_with($badge, '[')
+        // ZenHR owns clock-in/out interpretation. A terminal's unknown
+        // In/Out status is not by itself a reason to suppress a punch.
+        // Keep unknown direction in the outbox for forensic visibility.
+        $needsReview = str_starts_with($badge, '[')
             || str_starts_with($serial, '[') || $isHiliUncorrected;
 
-        $key = hash('sha256', implode('|', ['adms-zenhr-v1', $serial, $badge, $time, $direction]));
+        // Canonical event key for new punches, independent of the device
+        // and its In/Out label. Fallback retains unknown-badge diagnostics.
+        $key = ZenHrPunchIdentity::key($badge, $time)
+            ?? hash('sha256', implode('|', ['adms-zenhr-v1', $serial, $badge, $time, $direction]));
         $now = now('UTC')->format('Y-m-d H:i:s');
 
         return [
