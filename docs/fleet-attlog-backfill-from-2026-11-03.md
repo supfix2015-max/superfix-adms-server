@@ -8,7 +8,7 @@ This is a staged rollout plan, NOT a production-deployment instruction without a
 - The system requests device ATTLOG for 2026-11-03 00:00:00 through the current day. This retrospective query is opportunistic and depends on each firmware's PUSH DATA QUERY ATTLOG implementation and network connection.
 - Staged history uses adms.attendance_logs, with event/payload-hash deduplication.
 - Normal live (non-historical) punches can be written to dbo.Attendance only by devices explicitly allowed under LegacyAttendanceWriter. Begin with the approved Hili device, NOT every branch.
-- ZenHR AT2 receives verified pending records via its existing supervised auto-send. Earlier pre-cutover records are quarantined for review because the original BioWeb sender may already have exported them.
+- ZenHR AT2 sends only verified punches whose *actual UAE device timestamp* is from **2026-11-15 00:00:00** onward. All events from November 3–14 are stored in SQL / review-only outbox, never posted by this sender even if old pending rows exist.
 
 ## Opt-in configuration in Coolify
 
@@ -26,7 +26,8 @@ Do not put an unknown serial or office test-only serial on the original whitelis
 On the AT2-hosted instance, after checking outbox state and historical ZenHR delivery:
 
     ZENHR_OUTBOX_CUTOFF_LOCAL=2026-11-03 00:00:00
-    ZENHR_ATTENDANCE_REVIEW_BEFORE=2026-11-12 00:00:00
+    ZENHR_ATTENDANCE_REVIEW_BEFORE=2026-11-15 00:00:00
+    ZENHR_ATTENDANCE_SEND_FROM_LOCAL=2026-11-15 00:00:00
 
 The old static 2026-11-12 cutoff is intentionally preserved by default when the new environment variable is absent. The collector uses forward-only cursors. Merely changing the cutoff will NOT go backward through already advanced original SQL rows.
 
@@ -36,7 +37,7 @@ After redeploy and with a confirmed original DB backup:
 
     php artisan adms:zenhr-backfill-precutover --limit=500
 
-This scans 2026-11-03 00:00:00 inclusive through 2026-11-12 00:00:00 exclusive, independently from the current forward-only cursors.
+This scans 2026-11-03 00:00:00 inclusive through 2026-11-15 00:00:00 exclusive, independently from the current forward-only cursors.
 
 To stage reviewed candidate records into the protected outbox (not POST to ZenHR):
 
@@ -49,12 +50,15 @@ Do NOT blindly mass-release needs_review or re-send dates that the old BioWeb ex
 ## Continuous ingestion
 
 - Devices poll /iclock/getrequest and POST /iclock/cdata to AT1.
-- This feature replies to the next eligible poll with a scoped DATA QUERY ATTLOG for each registered historical terminal. A fixed end is optional. With an empty end, the existing daily date-key behavior means the device may be asked again on subsequent days; repeated events are deduplicated locally, but large device histories can cause avoidable traffic.
-- Normal realtime upload remains enabled through configured ZKTECO_OPTION_REALTIME. Clock/firmware compatibility and whether the device has uploaded ALL records are verified by comparing timestamp ranges and record counts.
-- Monitor AT2 device-connectivity, /iclock/cdata rawLogs, adms.attendance_logs and dbo.Attendance; a green ONLINE heartbeat alone does not prove records reached SQL or ZenHR.
+- This feature replies to the next eligible poll with a scoped DATA QUERY ATTLOG for each registered historical terminal. A fixed end is optional; if blank, the end is the UAE day of that terminal's first successful query scheduling. The stable per-device/start cache prevents daily resends while present (14-day TTL). Manual reconciliation is still required if firmware ignores the query; a redeploy or expired cache can cause a repeat, which is deduplicated.
+- Normal realtime upload remains enabled through configured ZKTECO_OPTION_REALTIME. Clock/firmware compatibility and whether the device has uploaded ALL records are verified by comparing timestamp ranges and record counts. The ZenHR sender runs at most one batch of 10 per minute; 202 status means asynchronous acceptance, not proof of ZenHR UI persistence.
+- Monitor AT2 device-connectivity, /iclock/cdata rawLogs, adms.attendance_logs and dbo.Attendance; a green ONLINE heartbeat alone does not prove records reached SQL or ZenHR. Older punches can arrive today and remain quarantined; the POST date gate checks the original punch time, NOT reception time.
 - Do not globally enable LEGACY_SQLSRV_ATTENDANCE_WRITE_ALL_REGISTERED until every device's clock, badge-to-employee mapping, and legacy SQL writer account have been validated, and the admin has a reversible rollback.
 
 ## Production safety checks
+
+DO NOT deploy before manual review of the PR and a SQL backup. No per-device ZKTECO_ATTLOG_BACKFILL_SERIAL changes are required once fleet mode is enabled.
+
 
 1. Back up SQL Server Att2000_V4 first.
 2. Turn off any competing old BioWeb sender for the SAME records during ZenHR cutover, but preserve original SQL and device data.
