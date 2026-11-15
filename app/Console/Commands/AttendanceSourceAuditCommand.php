@@ -101,7 +101,7 @@ final class AttendanceSourceAuditCommand extends Command
                         ->get(['BadgeNumber', 'VerifyTime'])
                         ->mapWithKeys(fn ($r) => [
                             trim((string) $r->BadgeNumber).'|'.
-                                ($r->VerifyTime instanceof \\DateTimeInterface
+                                ($r->VerifyTime instanceof \DateTimeInterface
                                     ? $r->VerifyTime->format('Y-m-d H:i:s')
                                     : substr((string) $r->VerifyTime, 0, 19)) => true,
                         ]);
