@@ -24,8 +24,12 @@ return [
     'attendance_branch_id' => (int) env('ZENHR_ATTENDANCE_BRANCH_ID', 0),
     // Change only after validating existing outbox cursors and past ZenHR imports.
     'outbox_cutoff_local' => env('ZENHR_OUTBOX_CUTOFF_LOCAL', '2026-11-12 00:00:00'),
-    // Pre-cutover rows can already exist in ZenHR; quarantine pending review before POST.
-    'attendance_review_before' => env('ZENHR_ATTENDANCE_REVIEW_BEFORE', '2026-11-12 00:00:00'),
+    // Historical punches may already have been exported from the old BioWeb system.
+    // Store pre-cutover punches for review; never auto-send them to ZenHR.
+    'attendance_review_before' => env('ZENHR_ATTENDANCE_REVIEW_BEFORE', '2026-11-15 00:00:00'),
+    // HARD outbound safeguard also applies to previously pending outbox rows.
+    // Cutover is UAE local wall-clock, not when the device happens to upload.
+    'attendance_send_from_local' => env('ZENHR_ATTENDANCE_SEND_FROM_LOCAL', '2026-11-15 00:00:00'),
     'outbox_auto_collect' => filter_var(env('ZENHR_OUTBOX_AUTO_COLLECT', false), FILTER_VALIDATE_BOOLEAN),
     // Original BioWeb CustomExportService uses aiapi.zenhr.com for bulk POST,
     // whereas employee GETs and OAuth use app.zenhr.com.
