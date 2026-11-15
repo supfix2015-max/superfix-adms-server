@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use RuntimeException;
@@ -34,8 +35,11 @@ final class ZenHrLegacyAttendanceSender
             throw new RuntimeException('Unexpected ZenHR branch; expected verified Superfix Group 17787.');
         }
 
+        $sendFrom = $this->minimumSendLocal();
         $rows = DB::connection('sqlsrv')->table(self::OUTBOX)
             ->where('delivery_state', 'pending')
+            // Filter before LIMIT so older pending rows cannot starve today's send.
+            ->where('punched_at_local', '>=', $sendFrom)
             ->orderBy('punched_at_local')
             ->orderBy('event_key')
             ->limit(5000)
@@ -113,6 +117,7 @@ final class ZenHrLegacyAttendanceSender
     public function send(array $selected): array
     {
         $this->assertRole();
+        $sendFrom = $this->minimumSendLocal();
 
         if (! config('zenhr.attendance_post_enabled', false)) {
             throw new RuntimeException('ZENHR_ATTENDANCE_POST_ENABLED is false; no POST sent.');
@@ -131,10 +136,15 @@ final class ZenHrLegacyAttendanceSender
             if (! is_array($r) || ! is_string($r['event_key'] ?? null)) {
                 throw new RuntimeException('Invalid selected event.');
             }
+            $requestTime = (string) ($r['request_time'] ?? '');
+            if (ZenHrPunchIdentity::key((string) ($r['employee_id'] ?? ''), $requestTime) === null
+                || $requestTime < $sendFrom) {
+                throw new RuntimeException('Refusing ZenHR POST for invalid or pre-cutover attendance timestamp.');
+            }
             $keys[] = $r['event_key'];
             $details[] = [
                 'employee_id' => (int) $r['employee_id'],
-                'request_time' => (string) $r['request_time'],
+                'request_time' => $requestTime,
                 'request_type' => (int) $r['request_type'],
                 'attendance_transaction_id' => $transaction,
                 'added_by' => 2,
@@ -145,12 +155,15 @@ final class ZenHrLegacyAttendanceSender
         }
 
         // Claim the entire batch atomically: zero POST if any row changed.
-        $claimed = DB::connection('sqlsrv')->transaction(function () use ($keys): bool {
+        $claimed = DB::connection('sqlsrv')->transaction(function () use ($keys, $sendFrom, $details): bool {
             $db = DB::connection('sqlsrv');
             $current = $db->table(self::OUTBOX)->whereIn('event_key', $keys)
-                ->lockForUpdate()->get(['event_key', 'delivery_state']);
+                ->lockForUpdate()->get(['event_key', 'delivery_state', 'punched_at_local']);
+            $submittedTimes = array_combine($keys, array_column($details, 'request_time'));
             if ($current->count() !== count($keys) ||
-                $current->contains(fn ($r) => $r->delivery_state !== 'pending')) {
+                $current->contains(fn ($r) => $r->delivery_state !== 'pending'
+                    || substr((string) $r->punched_at_local, 0, 19) < $sendFrom
+                    || ($submittedTimes[(string) $r->event_key] ?? '') !== substr((string) $r->punched_at_local, 0, 19))) {
                 return false;
             }
             $affected = $db->table(self::OUTBOX)->whereIn('event_key', $keys)
@@ -214,6 +227,24 @@ final class ZenHrLegacyAttendanceSender
                 'reason' => 'Delivery could not be confirmed; no automatic retry.',
             ];
         }
+    }
+
+    /**
+     * Hard outbound cutover: even a manually selected old pending row or a
+     * pre-existing outbox event must never reach ZenHR before this UAE date.
+     */
+    private function minimumSendLocal(): string
+    {
+        $value = trim((string) config('zenhr.attendance_send_from_local', '2026-11-15 00:00:00'));
+        if (! preg_match('/^\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}$/', $value)) {
+            throw new RuntimeException('Invalid ZenHR minimum send date format.');
+        }
+
+        $date = CarbonImmutable::createFromFormat('!Y-m-d H:i:s', $value, 'Asia/Dubai');
+        if ($date === false || $date->format('Y-m-d H:i:s') !== $value) {
+            throw new RuntimeException('Invalid ZenHR minimum send date.');
+        }
+        return $value;
     }
 
     private function assertRole(): void
