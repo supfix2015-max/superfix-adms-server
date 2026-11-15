@@ -17,13 +17,17 @@ Status: **PREPARATION ONLY — NOT CLEARED FOR PRODUCTION CUTOVER** (2026-11-15)
 
 The current intake writes unapproved devices to operational staging only. In a recent live sample the Ain Al Fayidah terminal `QQD4241200612` uploaded 207 records to ADMS via `DATA QUERY ATTLOG`. Transactions shows original `dbo.Attendance` only. Existing ZenHR outbox reads **both** staging and original. No production toggle should be changed until reconciled.
 
-The current `LegacyAttendanceWriter` uses an exact-match test on badge, serial, local time, and status to avoid duplicate original rows. The original table and ADMS table live in separate databases; application transactions cannot claim atomic commits across these databases unless a specifically validated distributed transaction mechanism is used. Therefore use a **durable, idempotent, retryable state machine**, never assume both records committed together.
+The current `LegacyAttendanceWriter` uses an exact-match test on badge, serial, local time, and status to avoid duplicate original rows. **Latest live discovery (2026-11-15):** both Laravel connections report `DB_NAME() = Att2000_V4`. This is NOT proof of separate physical databases, and even matching names alone do not establish whether both connections use the same SQL Server instance. Confirm host/instance with `SERVERPROPERTY('ServerName')`, `@@SERVERNAME` and `DB_NAME()` before designing a cross-database migration. The existing `config/database.php` comment also describes ADMS in the original database, using a distinct `adms` schema. The two-DB separation is an **approved target state**, not an established current state.
+
+The original and ADMS staging currently have 868 vs 353 records since Nov 3 across four branch devices (counts include Hili 293/293, Ain Al Fayidah 207/22, Um Ghafah 182/18, Al Maqam 186/20). **515 is only the difference between counts, NOT a verified list of 515 safe inserts**. The original currently contains zero Nov-15+ punches for the last three branches. Validate badge, serial, device-local time and status before promotion. Until cutover, reporting from `dbo.Attendance` is incomplete.
+
+For the eventual two-database design, commits across the two databases must not be assumed atomic unless a specifically validated mechanism is used. Use a **durable, idempotent, retryable state machine**, never assume both records committed together.
 
 ## Stage 0 — immutable evidence and recovery prerequisites
 
 1. **Freeze ZenHR outbound:** `ZENHR_ATTENDANCE_AUTO_SEND=false`, `ZENHR_ATTENDANCE_POST_ENABLED=false` on the console. Ensure the old BioWeb service does not export overlapping dates when switching later.
-2. Record deployed container Git ref, `DB_CONNECTION`, SQL database names, device timezone, writer allowlist and application role. Do not print credentials.
-3. Take full, verified SQL Server `.bak` backups of **both** databases, with a separate encrypted copy **off the VPS**; record backup timestamp and recovery model. Verify with `RESTORE VERIFYONLY` and a **real restore test to an isolated instance**. `VERIFYONLY` alone cannot guarantee recoverability.
+2. Record deployed container Git ref, `DB_CONNECTION`, actual SQL Server instance identities (`SERVERPROPERTY('ServerName')` for each connection), current `DB_NAME()`, list of actual databases and `adms` table counts, device timezone, writer allowlist and application role. Do not print credentials. DO NOT change `ADMS_SQLSRV_DATABASE` or switch to `AttendanceCloudV2` until operational tables are migrated, validated and the cutover plan is rehearsed.
+3. Take a full, verified SQL Server `.bak` backup of **every database currently present**. If both schemas are currently in the same `Att2000_V4` database, back it up as one original database; when `AttendanceCloudV2` actually exists as a separate operational database, back it up separately. Keep encrypted copies **off the VPS**; record backup timestamp and recovery model. Verify with `RESTORE VERIFYONLY` and a **real restore test to an isolated instance**. `VERIFYONLY` alone cannot guarantee recoverability.
 4. Before retention/deletion work, identify SQL Server recovery mode, log backup cadence, SQL Server edition, backup encryption, available disk space, RPO/RTO. Backups on the same VPS alone do not survive loss of the VPS.
 5. Execute the read-only Laravel audit (below) and reconcile original times/badges against each device. Pay special attention to Hili pre-2026-11-12 time-offset history.
 
@@ -41,6 +45,8 @@ php artisan adms:attendance-source-audit \
 The command **cannot** import, update, delete, issue ZKTeco commands or POST ZenHR. Sample "absent" is approximate by badge+serial+time and is **not** an insert-ready list. Device timezone and status mapping require separate validation.
 
 ## Stage 1 — ingestion reliability (not yet implemented)
+
+Before physical DB separation, compare and reconcile the current **same-named database connections**; stabilize authoritative insertion from every registered branch. Later, make a snapshot of **all operational ADMS tables, foreign keys, queues, outbox state and schema grants** and migrate them to the physically separate operational DB. Switching a connection name alone can strand the application without tables or data.
 
 1. Keep normal ZKTeco `/iclock/cdata` ingestion ACK semantics only after a durable event is recorded; stage pending events with a stable per-device payload/event key.
 2. Independently promote validated rows into the authoritative original table using the restricted INSERT account, in short batches. Match badge to `dbo.Employee`, device to `dbo.Device`, normalize UAE wall-clock, and preserve status/verification method.
