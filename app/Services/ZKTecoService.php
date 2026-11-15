@@ -1314,24 +1314,36 @@ class ZKTecoService
             return null;
         }
 
-        // A fixed end date is needed for a stable one-off cache key.
-        // An omitted end uses a fixed 23:59:59 of today's UAE date.
+        // An omitted end means "up to the first connection's UAE day".
+        // Use one stable identity for each terminal/start pair, not a new
+        // key each midnight. Continuous real-time pushes cover later punches.
         if ((string) config('zkteco.attlog_backfill_end', '') === '') {
             $end = substr($end, 0, 10).' 23:59:59';
         }
 
-        $key = 'adms:attendance-history-query:'.hash('sha256', $serial.'|'.$start.'|'.$end);
+        $key = $this->historicalAttendanceQueryCacheKey($serial);
         $cache = Cache::store('file');
         if (! $cache->add($key.':issued', true, 14 * 86400)) {
             return null;
         }
 
+        // Keep the first command's exact end for later callback correlation.
+        $cache->put($key.':end', $end, 14 * 86400);
         // A positive int <= 2^31-1, distinct from hourly clock command IDs.
         $commandId = (string) (now()->timestamp - 1000000000);
         $cache->put($key.':reply-id', $commandId, 14 * 86400);
 
         return 'C:'.$commandId.':DATA QUERY ATTLOG StartTime='
             .$start."\t".'EndTime='.$end;
+    }
+
+    private function historicalAttendanceQueryCacheKey(string $serial): string
+    {
+        // A change to the start/end configuration deliberately creates a
+        // fresh one-off query per known terminal.
+        $start = (string) config('zkteco.attlog_backfill_start', '');
+        $configuredEnd = (string) config('zkteco.attlog_backfill_end', '');
+        return 'adms:attendance-history-query:'.hash('sha256', $serial.'|'.$start.'|'.$configuredEnd);
     }
 
     private function acceptHistoricalAttendanceQueryReply(Device $device, array $context): bool
@@ -1341,14 +1353,8 @@ class ZKTecoService
             return false;
         }
 
-        $start = (string) config('zkteco.attlog_backfill_start', '');
-        $end = (string) config('zkteco.attlog_backfill_end', '');
-        if ($end === '') {
-            $end = $this->systemClockService->now()->format('Y-m-d').' 23:59:59';
-        }
-
         $serial = trim((string) ($device->serial_number ?: $device->sn));
-        $key = 'adms:attendance-history-query:'.hash('sha256', $serial.'|'.$start.'|'.$end);
+        $key = $this->historicalAttendanceQueryCacheKey($serial);
         $expected = (string) Cache::store('file')->get($key.':reply-id', '');
         if ($expected === '') {
             return false;
