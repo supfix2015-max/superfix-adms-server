@@ -57,8 +57,16 @@ final class AttendanceSourceAuditCommand extends Command
             }
 
             $this->info('READ ONLY — no data written to either database or ZenHR.');
-            $this->line('Operational SQL: '.config('database.connections.sqlsrv.database'));
-            $this->line('Original SQL: '.config('database.connections.legacy_sqlsrv.database'));
+            $opConnection = DB::connection('sqlsrv');
+            $legacyServer = $legacy->selectOne("SELECT CAST(SERVERPROPERTY('ServerName') AS nvarchar(256)) AS server_name, DB_NAME() AS database_name");
+            $operationalServer = $opConnection->selectOne("SELECT CAST(SERVERPROPERTY('ServerName') AS nvarchar(256)) AS server_name, DB_NAME() AS database_name");
+            $this->line('Operational SQL: '.($operationalServer->server_name ?? 'unknown').'/'.($operationalServer->database_name ?? 'unknown'));
+            $this->line('Original SQL: '.($legacyServer->server_name ?? 'unknown').'/'.($legacyServer->database_name ?? 'unknown'));
+            if ($operationalServer && $legacyServer
+                && $operationalServer->server_name === $legacyServer->server_name
+                && $operationalServer->database_name === $legacyServer->database_name) {
+                $this->warn('TOPOLOGY: both connections point to the same server/database; separate schemas do not mean two physical databases.');
+            }
             $this->line('Review window: '.$startLocal.' onward; outbound cutoff: '.$sendLocal.' (Asia/Dubai).');
             $this->line('NOTICE: Counts alone do not prove that punches match; sample matching ignores punch status.');
             $rows = [];
