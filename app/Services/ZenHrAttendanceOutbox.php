@@ -73,12 +73,19 @@ final class ZenHrAttendanceOutbox
 
         $dbCursor = (int) $cursor->last_dbo_id;
         $admsCursor = (int) $cursor->last_adms_id;
-        $cutoff = CarbonImmutable::parse(self::CUTOFF, self::TIMEZONE);
+        $cutoffLocal = trim((string) config('zenhr.outbox_cutoff_local', self::CUTOFF));
+        if (! preg_match('/^\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}$/', $cutoffLocal)) {
+            throw new RuntimeException('Invalid ZENHR_OUTBOX_CUTOFF_LOCAL date format.');
+        }
+        $cutoff = CarbonImmutable::createFromFormat('!Y-m-d H:i:s', $cutoffLocal, self::TIMEZONE);
+        if ($cutoff === false || $cutoff->format('Y-m-d H:i:s') !== $cutoffLocal) {
+            throw new RuntimeException('Invalid ZENHR_OUTBOX_CUTOFF_LOCAL date.');
+        }
         $utcStart = $cutoff->utc()->format('Y-m-d H:i:s');
 
         $original = DB::connection('legacy_sqlsrv')->table('dbo.Attendance')
             ->where('Id', '>', $dbCursor)
-            ->where('VerifyTime', '>=', self::CUTOFF)
+            ->where('VerifyTime', '>=', $cutoffLocal)
             ->orderBy('Id')
             ->limit($limit)
             ->get(['Id', 'BadgeNumber', 'DeviceSerialNumber', 'VerifyTime', 'Status', 'VerifyType']);
@@ -220,8 +227,12 @@ final class ZenHrAttendanceOutbox
         // ZenHR owns clock-in/out interpretation. A terminal's unknown
         // In/Out status is not by itself a reason to suppress a punch.
         // Keep unknown direction in the outbox for forensic visibility.
+        $reviewBefore = trim((string) config('zenhr.attendance_review_before', self::CUTOFF));
+        // Pre-cutover records may already have been exported by the original
+        // BioWeb sender. Never automatically re-POST unverified history.
+        $previouslyExportable = $reviewBefore !== '' && $time < $reviewBefore;
         $needsReview = str_starts_with($badge, '[')
-            || str_starts_with($serial, '[') || $isHiliUncorrected;
+            || str_starts_with($serial, '[') || $isHiliUncorrected || $previouslyExportable;
 
         // Canonical event key for new punches, independent of the device
         // and its In/Out label. Fallback retains unknown-badge diagnostics.
