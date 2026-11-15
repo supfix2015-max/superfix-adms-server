@@ -747,9 +747,8 @@ class ZKTecoService
             ?? $context['metadata']['stamp']
             ?? ''
         ));
-        $stagingBackfill = config('zkteco.attlog_backfill_enabled', false)
-            && (string) $device->serial_number === (string) config('zkteco.attlog_backfill_serial', '')
-            && $queryStamp === '0';
+        $stagingBackfill = $queryStamp === '0'
+            && $this->isBackfillEligibleDevice($device);
 
         // Under explicit cutover, write first to the ORIGINAL SQL Server DB.
         // If that fails, return an error (not OK) to the device; a retry will
@@ -1246,7 +1245,34 @@ class ZKTecoService
     }
 
     /**
-     * Scoped one-shot retroactive read from one original ZKTeco terminal.
+     * Historical ATTLOG replay is restricted to the dbo.Device roster.
+     * Serial-only admission on public HTTP is a transition measure, not authentication.
+     * Office-only test terminals are never included in fleet replay.
+     */
+    private function isBackfillEligibleDevice(Device $device): bool
+    {
+        if (! config('zkteco.attlog_backfill_enabled', false) || ! $device->exists || $device->trashed()) {
+            return false;
+        }
+
+        $serial = trim((string) ($device->serial_number ?: $device->sn));
+        $named = trim((string) config('zkteco.attlog_backfill_serial', ''));
+        $enabledForSerial = $serial !== '' && (
+            ($named !== '' && hash_equals($named, $serial))
+            || config('zkteco.attlog_backfill_all_registered', false)
+        );
+        if (! $enabledForSerial) {
+            return false;
+        }
+
+        return DB::connection('legacy_sqlsrv')
+            ->table('dbo.Device')
+            ->where('DeviceSerialNumber', $serial)
+            ->exists();
+    }
+
+    /**
+     * Scoped one-shot retroactive read from an original ZKTeco terminal.
      * A public-HTTP serial is NOT proof of device identity: this exception
      * only requests ATTLOG and never authorizes ordinary device commands.
      */
@@ -1259,19 +1285,12 @@ class ZKTecoService
             return null;
         }
 
+        // Only originally registered devices are eligible. A fleet opt-in
+        // removes the single-serial limitation but never accepts unknown SNs.
+        if (! $this->isBackfillEligibleDevice($device)) {
+            return null;
+        }
         $serial = trim((string) ($device->serial_number ?: $device->sn));
-        if ($serial === '' || ! hash_equals(
-            (string) config('zkteco.attlog_backfill_serial', ''),
-            $serial
-        )) {
-            return null;
-        }
-
-        // Require original SQL Server registration, never unknown devices.
-        if (! DB::connection('legacy_sqlsrv')->table('dbo.Device')
-            ->where('DeviceSerialNumber', $serial)->exists()) {
-            return null;
-        }
 
         $start = (string) config('zkteco.attlog_backfill_start', '');
         $end = (string) config('zkteco.attlog_backfill_end', '');
@@ -1317,10 +1336,8 @@ class ZKTecoService
 
     private function acceptHistoricalAttendanceQueryReply(Device $device, array $context): bool
     {
-        if (! config('zkteco.attlog_backfill_enabled', false)
-            || ! config('zkteco.command_require_token', true)
-            || trim((string) ($device->serial_number ?: $device->sn))
-                !== (string) config('zkteco.attlog_backfill_serial', '')) {
+        if (! config('zkteco.command_require_token', true)
+            || ! $this->isBackfillEligibleDevice($device)) {
             return false;
         }
 
