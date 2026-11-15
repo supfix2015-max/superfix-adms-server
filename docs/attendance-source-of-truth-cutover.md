@@ -44,7 +44,28 @@ php artisan adms:attendance-source-audit \
 
 The command **cannot** import, update, delete, issue ZKTeco commands or POST ZenHR. Sample "absent" is approximate by badge+serial+time and is **not** an insert-ready list. Device timezone and status mapping require separate validation.
 
-## Stage 1 — ingestion reliability (not yet implemented)
+## Stage 1 — ingestion reliability (opt-in promoter implemented on this branch, NOT deployed or production-verified)
+
+This branch includes `php artisan adms:attendance-promote` and the AT2 worker opt-in:
+- Default DRY RUN; `--apply` only when `LEGACY_SQLSRV_ATTENDANCE_PROMOTER_ENABLED=true`, `LEGACY_SQLSRV_ATTENDANCE_WRITE_ENABLED=true`, a restricted original SQL writer login exists, and `LEGACY_SQLSRV_ATTENDANCE_TIMEZONE=Asia/Dubai`.
+- Scans staged rows in ID order (250 per minute when enabled in the existing AT2 worker), excludes five old/office serials, verifies the 18 branch roster and original registered serials.
+- Skips any row not eligible for safe INSERT: missing badge, invalid status/verification, future stamp, Hili pre-clock-fix history, or a conflicting status on the same badge/serial/time. Original writer uses SQL transaction+app lock to deduplicate.
+- Saves progress in the Laravel **file cache** after each scanned record; container/cache replacement can cause a harmless **rescan** because original insertion is idempotent. A durable SQL-backed cursor/audit ledger is recommended before large-scale expansion.
+- Does not update/delete original `dbo.Attendance`, mutate `adms.attendance_logs`, or automatically approve exceptions.
+
+**After a verified backup and code review**, check dry-run (no flags required):
+
+```bash
+php artisan adms:attendance-promote --from-id=0 --limit=250
+```
+
+Then set (AT2 worker only) `LEGACY_SQLSRV_ATTENDANCE_PROMOTER_ENABLED=true` **only after** verifying original SQL credentials / write-readiness. This flag is independent of `LEGACY_SQLSRV_ATTENDANCE_WRITE_ALL_REGISTERED`, which stays `false` globally. The promoter authorizes only verified branch originals in its own process.
+
+**ZenHR source safety has also been coded on this branch**: normal outbox collection uses only original `dbo.Attendance`. Pending historical stage-derived outbox rows can be promoted to official sources when the exact canonical event key is found; sender preview and claim require source_kind=`dbo` and recheck badge, serial, date and status in original SQL before POST. The ZenHR sending flags must **remain false** pending old BioWeb exporter reconciliation and integration testing.
+
+CI, SQL Server schema compatibility, SQL writer privileges, worker process health, and independent restoration tests are **not yet verified**.
+
+## Reliability follow-up (not yet implemented)
 
 Before physical DB separation, compare and reconcile the current **same-named database connections**; stabilize authoritative insertion from every registered branch. Later, make a snapshot of **all operational ADMS tables, foreign keys, queues, outbox state and schema grants** and migrate them to the physically separate operational DB. Switching a connection name alone can strand the application without tables or data.
 
@@ -64,9 +85,9 @@ Before physical DB separation, compare and reconcile the current **same-named da
 - Never bulk INSERT unsupervised historical rows: old exporter may have already imported them and Hili earlier clocks require specific correction.
 - Apply only approved batches; verify the original Transactions view reflects exactly those rows.
 
-## Stage 3 — dbo-only ZenHR (not yet implemented)
+## Stage 3 — dbo-only ZenHR (code gated on this branch, live validation pending)
 
-- Collect *only* `Att2000_V4.dbo.Attendance` into the outbox; ignore stage-only events and quarantine older pending ADMS-derived outbox entries.
+- Collector now reads *only* `Att2000_V4.dbo.Attendance` for normal outbound events; no staged-only event is sendable. Older ADMS-derived pending events are blocked by sender and only promoted to dbo source after matching canonical original row. Existing sent/unknown states are never silently reset.
 - Outbound worker must recheck source `dbo.Attendance.Id`, badge, timestamp, status, and cancellation state before sending, not just trust an old outbox snapshot.
 - At exactly `2026-11-15 00:00:00` in `Asia/Dubai`, evaluate **punch time**, not upload time. No pre-cutover POST.
 - De-duplicate against old BioWeb ZenHR exports and review ZenHR results (HTTP 202 means accepted, not necessarily displayed/imported).
