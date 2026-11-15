@@ -6,6 +6,17 @@ cd /var/www/html
 sender_halted=0
 
 while :; do
+    # Original dbo.Attendance is authoritative. This reconciles only valid
+    # staged punches, with an independent explicit opt-in and SQL INSERT-only
+    # login. It NEVER updates/deletes existing original attendance.
+    if [ "${LEGACY_SQLSRV_ATTENDANCE_PROMOTER_ENABLED:-false}" = "true" ]; then
+        if ! /usr/local/bin/php artisan adms:attendance-promote --apply --limit=250; then
+            echo "Original attendance promotion failed; check SQL permissions/clock mismatches." >&2
+            sleep 60
+            continue
+        fi
+    fi
+
     if ! /usr/local/bin/php artisan adms:zenhr-outbox --apply --limit=500; then
         echo "ZenHR outbox staging failed; skip sending this cycle." >&2
         sleep 60
