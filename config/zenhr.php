@@ -22,7 +22,10 @@ return [
     // Selected ZenHR company branch. Never infer from physical device/office location.
     // Deliberately unset until the account's branch ID has been verified.
     'attendance_branch_id' => (int) env('ZENHR_ATTENDANCE_BRANCH_ID', 0),
-    'outbox_cutoff_local' => '2026-11-12 00:00:00',
+    // Change only after validating existing outbox cursors and past ZenHR imports.
+    'outbox_cutoff_local' => env('ZENHR_OUTBOX_CUTOFF_LOCAL', '2026-11-12 00:00:00'),
+    // Pre-cutover rows can already exist in ZenHR; quarantine pending review before POST.
+    'attendance_review_before' => env('ZENHR_ATTENDANCE_REVIEW_BEFORE', '2026-11-12 00:00:00'),
     'outbox_auto_collect' => filter_var(env('ZENHR_OUTBOX_AUTO_COLLECT', false), FILTER_VALIDATE_BOOLEAN),
     // Original BioWeb CustomExportService uses aiapi.zenhr.com for bulk POST,
     // whereas employee GETs and OAuth use app.zenhr.com.
