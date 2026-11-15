@@ -172,6 +172,122 @@ final class ZenHrAttendanceOutbox
         ];
     }
 
+    /**
+     * One-time retrospective scan independent of already advanced outbox cursors.
+     * Read original dbo + ADMS staging from the chosen cutoff up to the
+     * pre-cutover review boundary. Inserts are quarantined as needs_review
+     * by build(); this method NEVER posts to ZenHR and NEVER updates cursors.
+     */
+    public function backfillPreCutover(int $limit = 500, int $afterDboId = 0, int $afterAdmsId = 0, bool $apply = false): array
+    {
+        if (! $this->isProvisioned()) {
+            throw new RuntimeException('ZenHR outbox tables are not provisioned.');
+        }
+        if ($limit < 1 || $limit > 1000 || $afterDboId < 0 || $afterAdmsId < 0) {
+            throw new RuntimeException('Invalid history backfill pagination.');
+        }
+        $start = trim((string) config('zenhr.outbox_cutoff_local', self::CUTOFF));
+        $end = trim((string) config('zenhr.attendance_review_before', self::CUTOFF));
+        foreach ([$start, $end] as $value) {
+            if (! preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', $value)) {
+                throw new RuntimeException('History backfill boundary must be YYYY-MM-DD HH:MM:SS.');
+            }
+            $parsed = CarbonImmutable::createFromFormat('!Y-m-d H:i:s', $value, self::TIMEZONE);
+            if ($parsed === false || $parsed->format('Y-m-d H:i:s') !== $value) {
+                throw new RuntimeException('Invalid history backfill date.');
+            }
+        }
+        if ($start >= $end) {
+            throw new RuntimeException('History start must precede pre-cutover review boundary.');
+        }
+
+        $original = DB::connection('legacy_sqlsrv')->table('dbo.Attendance')
+            ->where('Id', '>', $afterDboId)
+            ->where('VerifyTime', '>=', $start)
+            ->where('VerifyTime', '<', $end)
+            ->orderBy('Id')->limit($limit)
+            ->get(['Id', 'BadgeNumber', 'DeviceSerialNumber', 'VerifyTime', 'Status', 'VerifyType']);
+
+        $startUtc = CarbonImmutable::parse($start, self::TIMEZONE)->utc()->format('Y-m-d H:i:s');
+        $endUtc = CarbonImmutable::parse($end, self::TIMEZONE)->utc()->format('Y-m-d H:i:s');
+        $staged = AttendanceLog::query()
+            ->where('id', '>', $afterAdmsId)
+            ->where('log_time', '>=', $startUtc)
+            ->where('log_time', '<', $endUtc)
+            ->orderBy('id')->limit($limit)
+            ->get(['id', 'device_id', 'employee_code', 'log_time', 'raw_payload', 'log_type', 'verify_type']);
+
+        $ids = $staged->pluck('device_id')->filter()->unique()->values()->all();
+        $serials = $ids === [] ? collect()
+            : DB::connection('sqlsrv')->table('adms.devices')
+                ->whereIn('id', $ids)->pluck('serial_number', 'id');
+
+        $seen = [];
+        $new = [];
+        $duplicate = 0;
+        $review = 0;
+        $proposed = 0;
+        $lastDbo = $afterDboId;
+        $lastAdms = $afterAdmsId;
+        foreach ($original as $row) {
+            $lastDbo = max($lastDbo, (int) $row->Id);
+            $item = $this->build(
+                'dbo', (int) $row->Id, (string) ($row->BadgeNumber ?? ''),
+                (string) ($row->DeviceSerialNumber ?? ''),
+                CarbonImmutable::parse((string) $row->VerifyTime, self::TIMEZONE)->format('Y-m-d H:i:s'),
+                (string) ($row->Status ?? ''), (string) ($row->VerifyType ?? '')
+            );
+            $this->offer($item, $seen, $new, $duplicate, $review, $proposed);
+        }
+        foreach ($staged as $row) {
+            $lastAdms = max($lastAdms, (int) $row->id);
+            $direction = 'unknown';
+            try {
+                $direction = LegacyAttendanceValueMapper::status([
+                    'raw_payload' => $row->raw_payload,
+                    'log_type' => $row->log_type,
+                ]);
+            } catch (\Throwable) {
+                // Unknown device direction is recorded and ZenHR decides In/Out.
+            }
+            $item = $this->build(
+                'adms', (int) $row->id, (string) ($row->employee_code ?? ''),
+                (string) ($serials->get($row->device_id) ?? ''),
+                CarbonImmutable::instance($row->log_time)
+                    ->setTimezone(self::TIMEZONE)->format('Y-m-d H:i:s'),
+                $direction, (string) ($row->verify_type ?? '')
+            );
+            $this->offer($item, $seen, $new, $duplicate, $review, $proposed);
+        }
+
+        if ($apply && $new !== []) {
+            DB::connection('sqlsrv')->transaction(function () use ($new): void {
+                $db = DB::connection('sqlsrv');
+                foreach ($new as $row) {
+                    if ($row['delivery_state'] !== 'needs_review') {
+                        throw new RuntimeException('Unsafe pre-cutover event is not quarantined.');
+                    }
+                    if (! $db->table(self::TABLE)->where('event_key', $row['event_key'])->exists()) {
+                        $db->table(self::TABLE)->insert($row);
+                    }
+                }
+            }, 1);
+        }
+
+        return [
+            'mode' => $apply ? 'STAGED FOR REVIEW · NO ZENHR POST' : 'DRY RUN · NO WRITES',
+            'range_local' => $start.' through '.$end.' (exclusive)',
+            'dbo_read' => $original->count(),
+            'adms_read' => $staged->count(),
+            'unique_new' => $proposed,
+            'already_present' => $duplicate,
+            'needs_review' => $review,
+            'after_dbo_id' => $lastDbo,
+            'after_adms_id' => $lastAdms,
+            'has_more' => $original->count() === $limit || $staged->count() === $limit,
+        ];
+    }
+
     private function offer(
         array $item,
         array &$seen,
