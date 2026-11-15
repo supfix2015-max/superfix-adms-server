@@ -101,8 +101,9 @@ final class AttendanceSourceAuditCommand extends Command
                         ->get(['BadgeNumber', 'VerifyTime'])
                         ->mapWithKeys(fn ($r) => [
                             trim((string) $r->BadgeNumber).'|'.
-                                CarbonImmutable::parse((string) $r->VerifyTime, 'Asia/Dubai')
-                                    ->format('Y-m-d H:i:s') => true,
+                                ($r->VerifyTime instanceof \\DateTimeInterface
+                                    ? $r->VerifyTime->format('Y-m-d H:i:s')
+                                    : substr((string) $r->VerifyTime, 0, 19)) => true,
                         ]);
                 }
 
