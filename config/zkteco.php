@@ -82,6 +82,8 @@ return [
     // Deliberate ONE-device retrospective ATTLOG query. Never a full fleet
     // command, and never transmits template/user-delete/reboot commands.
     'attlog_backfill_enabled' => filter_var(env('ZKTECO_ATTLOG_BACKFILL_ENABLED', false), FILTER_VALIDATE_BOOLEAN),
+    // Opt in to all pre-registered dbo.Device terminals; unknown and office-only devices stay blocked.
+    'attlog_backfill_all_registered' => filter_var(env('ZKTECO_ATTLOG_BACKFILL_ALL_REGISTERED', false), FILTER_VALIDATE_BOOLEAN),
     'attlog_backfill_serial' => trim((string) env('ZKTECO_ATTLOG_BACKFILL_SERIAL', '')),
     'attlog_backfill_start' => trim((string) env('ZKTECO_ATTLOG_BACKFILL_START', '')),
     'attlog_backfill_end' => trim((string) env('ZKTECO_ATTLOG_BACKFILL_END', '')),
