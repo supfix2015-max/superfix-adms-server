@@ -38,6 +38,8 @@ final class ZenHrLegacyAttendanceSender
         $sendFrom = $this->minimumSendLocal();
         $rows = DB::connection('sqlsrv')->table(self::OUTBOX)
             ->where('delivery_state', 'pending')
+            // Source-of-truth policy: ADMS-staged-only punches must never reach ZenHR.
+            ->where('source_kind', 'dbo')
             // Filter before LIMIT so older pending rows cannot starve today's send.
             ->where('punched_at_local', '>=', $sendFrom)
             ->orderBy('punched_at_local')
@@ -158,16 +160,33 @@ final class ZenHrLegacyAttendanceSender
         $claimed = DB::connection('sqlsrv')->transaction(function () use ($keys, $sendFrom, $details): bool {
             $db = DB::connection('sqlsrv');
             $current = $db->table(self::OUTBOX)->whereIn('event_key', $keys)
-                ->lockForUpdate()->get(['event_key', 'delivery_state', 'punched_at_local']);
+                ->lockForUpdate()->get(['event_key', 'delivery_state', 'punched_at_local',
+                    'source_kind', 'source_id', 'badge_number', 'device_serial', 'direction']);
             $submittedTimes = array_combine($keys, array_column($details, 'request_time'));
             if ($current->count() !== count($keys) ||
                 $current->contains(fn ($r) => $r->delivery_state !== 'pending'
+                    || (string) $r->source_kind !== 'dbo'
                     || substr((string) $r->punched_at_local, 0, 19) < $sendFrom
                     || ($submittedTimes[(string) $r->event_key] ?? '') !== substr((string) $r->punched_at_local, 0, 19))) {
                 return false;
             }
+            // Recheck the official row immediately before claiming for POST.
+            // An orphaned/deleted row or a changed time/status must fail closed.
+            $requestedTypes = array_combine($keys, array_column($details, 'request_type'));
+            foreach ($current as $item) {
+                $source = DB::connection('legacy_sqlsrv')->table('dbo.Attendance')
+                    ->where('Id', (int) $item->source_id)
+                    ->where('BadgeNumber', (string) $item->badge_number)
+                    ->where('DeviceSerialNumber', (string) $item->device_serial)
+                    ->where('VerifyTime', substr((string) $item->punched_at_local, 0, 19))
+                    ->first(['StatusId', 'Status']);
+                if ($source === null || ZenHrLegacyRequestType::fromFields($source->StatusId, $source->Status)
+                    !== (int) ($requestedTypes[(string) $item->event_key] ?? -1)) {
+                    return false;
+                }
+            }
             $affected = $db->table(self::OUTBOX)->whereIn('event_key', $keys)
-                ->where('delivery_state', 'pending')->update([
+                ->where('delivery_state', 'pending')->where('source_kind', 'dbo')->update([
                     'delivery_state' => 'inflight',
                     'last_attempt_at' => now('UTC')->format('Y-m-d H:i:s'),
                     'updated_at' => now('UTC')->format('Y-m-d H:i:s'),
@@ -312,26 +331,22 @@ final class ZenHrLegacyAttendanceSender
      * stores StatusId=NULL and Status='Check-In' / 'Check-Out': those are
      * equivalent to 0 / 1 in the confirmed ZenHR bulk request contract.
      *
-     * If an ADMS-only punch has not yet been mirrored to dbo.Attendance,
-     * fall back to its staged normalized status. Never invent a status.
+     * Never infer a sendable status from an ADMS-only row: only the
+     * authoritative original SQL Server attendance record may be sent.
      */
     private function oldStatusId(object $item): ?int
     {
         $db = DB::connection('legacy_sqlsrv')->table('dbo.Attendance');
 
-        if ((string) $item->source_kind === 'dbo') {
-            $records = $db->where('Id', (int) $item->source_id)
-                ->get(['BadgeNumber', 'VerifyTime', 'StatusId', 'Status']);
-        } else {
-            $records = $db->where('BadgeNumber', (string) $item->badge_number)
-                ->where('VerifyTime', substr((string) $item->punched_at_local, 0, 19))
-                ->limit(10)->get(['BadgeNumber', 'VerifyTime', 'StatusId', 'Status']);
+        if ((string) $item->source_kind !== 'dbo') {
+            return null;
         }
+        $records = $db->where('Id', (int) $item->source_id)
+            ->where('DeviceSerialNumber', (string) $item->device_serial)
+            ->get(['BadgeNumber', 'VerifyTime', 'StatusId', 'Status']);
 
         if ($records->isEmpty()) {
-            return (string) $item->source_kind === 'adms'
-                ? ZenHrLegacyRequestType::fromFields(null, $item->direction)
-                : null;
+            return null;
         }
 
         $states = [];
