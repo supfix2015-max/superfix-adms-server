@@ -1355,23 +1355,74 @@ class ZKTecoService
 
         $serial = trim((string) ($device->serial_number ?: $device->sn));
         $key = $this->historicalAttendanceQueryCacheKey($serial);
-        $expected = (string) Cache::store('file')->get($key.':reply-id', '');
-        if ($expected === '') {
-            return false;
-        }
+        $cache = Cache::store('file');
+        $expected = (string) $cache->get($key.':reply-id', '');
 
         foreach ($this->extractCommandReplyRecords($context) as $record) {
             $id = trim((string) ($record['ID'] ?? $record['CmdID'] ?? $record['id'] ?? ''));
             $command = strtoupper(trim((string) ($record['CMD'] ?? $record['Command'] ?? '')));
-            if ($id !== '' && hash_equals($expected, $id) && $command === 'DATA') {
-                // Return may be a negative error code. Record the exact
-                // reply status for manual diagnostics; never delete any logs.
-                Cache::store('file')->put($key.':last-response', $record, 14 * 86400);
-                return true;
+            if ($id === '' || $command !== 'DATA') {
+                continue;
             }
+
+            // A container restart or optimize:clear destroys the file-cache
+            // receipt key, even though the terminal has already executed the
+            // original one-shot DATA QUERY ATTLOG. Only acknowledge that
+            // historical reply if the SQL audit trail proves THIS device was
+            // sent THIS command ID. Never accept arbitrary tokenless replies.
+            $matchesCachedId = $expected !== '' && hash_equals($expected, $id);
+            if (! $matchesCachedId && ! $this->wasHistoricalBackfillCommandIssued($device, $id)) {
+                continue;
+            }
+
+            // Repeated acknowledgements are harmless. Returning 200/OK
+            // stops ZKTeco firmware from retrying the same valid command
+            // thousands of times and does not grant command dispatch access.
+            $cache->put($key.':reply-id', $id, 14 * 86400);
+            $cache->put($key.':last-response', $record, 14 * 86400);
+
+            return true;
         }
 
         return false;
+    }
+
+    /**
+     * Reconstruct only our own issued one-shot historical query from SQL.
+     *
+     * Its command ID is the issue-time Unix second minus 1,000,000,000.
+     * The original /iclock/getrequest audit row must match the same device,
+     * command type, and timestamp. No terminal-provided serial or command ID
+     * alone is sufficient authentication.
+     */
+    private function wasHistoricalBackfillCommandIssued(Device $device, string $commandId): bool
+    {
+        if (! ctype_digit($commandId)) {
+            return false;
+        }
+
+        $issuedAt = (int) $commandId + 1000000000;
+        if ($issuedAt <= 1000000000 || $issuedAt > now()->timestamp) {
+            return false;
+        }
+
+        $date = \Carbon\CarbonImmutable::createFromTimestamp($issuedAt, 'UTC');
+
+        return RawLog::query()
+            ->where('device_id', $device->id)
+            ->where('endpoint', '/iclock/getrequest')
+            ->where('processing_status', 'processed')
+            ->whereBetween('created_at', [
+                $date->subSeconds(3)->format('Y-m-d H:i:s'),
+                $date->addSeconds(3)->format('Y-m-d H:i:s'),
+            ])
+            ->orderByDesc('id')
+            ->limit(15)
+            ->get(['created_at', 'parsed_data'])
+            ->contains(static fn (RawLog $log): bool =>
+                ($log->parsed_data['mode'] ?? null) === 'legacy_attlog_backfill_sent'
+                && abs($log->created_at->timestamp - $issuedAt) <= 3
+            );
     }
 
     private function ensureAutomaticTimeSyncQueued(Device $device): void
