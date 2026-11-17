@@ -162,6 +162,8 @@ class ZKTecoService
                 $this->finishRawLog($rawLog, 'processed', 1, [
                     'mode' => 'legacy_attlog_backfill_sent',
                     'command' => 'DATA QUERY ATTLOG',
+                    'command_id' => explode(':', $backfillCommand, 3)[1],
+                    'backfill_key' => $this->historicalAttendanceQueryCacheKey(trim((string) ($device->serial_number ?: $device->sn))),
                     'authenticated' => $this->hasAuthenticatedDeviceToken($request, $device),
                 ]);
 
@@ -305,15 +307,17 @@ class ZKTecoService
 
     public function handleTestPing(Request $request): string
     {
-        $context = $this->buildContext($request, '/iclock/test');
+        $endpoint = $request->is('iclock/ping') ? '/iclock/ping' : '/iclock/test';
+        $mode = $request->is('iclock/ping') ? 'ping' : 'test';
+        $context = $this->buildContext($request, $endpoint);
         $rawLog = $this->createRawLog(null, $context);
 
         try {
             $device = $this->resolveDevice($request, $context);
             $this->attachRawLogDevice($rawLog, $device);
             $this->touchDevice($device, $request, $context);
-            $this->finishRawLog($rawLog, 'processed', 0, ['mode' => 'test']);
-            $this->logRequestHandled($context['endpoint'], $device, ['mode' => 'test']);
+            $this->finishRawLog($rawLog, 'processed', 0, ['mode' => $mode]);
+            $this->logRequestHandled($context['endpoint'], $device, ['mode' => $mode]);
 
             return "OK\r\n";
         } catch (\Throwable $exception) {
@@ -1323,6 +1327,30 @@ class ZKTecoService
 
         $key = $this->historicalAttendanceQueryCacheKey($serial);
         $cache = Cache::store('file');
+        if ($cache->get($key.':issued')) {
+            return null;
+        }
+
+        // The cache is an optimization, not the source of truth. A prior
+        // audited dispatch for this scope must survive a container redeploy.
+        // Old audit rows have no scope key; conservatively treat them as
+        // already issued rather than sending an unverified duplicate query.
+        $alreadyIssued = RawLog::withTrashed()
+            ->where('device_id', $device->id)
+            ->where('endpoint', '/iclock/getrequest')
+            ->where('processing_status', 'processed')
+            ->where('parsed_data->mode', 'legacy_attlog_backfill_sent')
+            ->where(function ($query) use ($key): void {
+                $query->where('parsed_data->backfill_key', $key)
+                    ->orWhereNull('parsed_data->backfill_key');
+            })
+            ->exists();
+
+        if ($alreadyIssued) {
+            $cache->put($key.':issued', true, 14 * 86400);
+            return null;
+        }
+
         if (! $cache->add($key.':issued', true, 14 * 86400)) {
             return null;
         }
