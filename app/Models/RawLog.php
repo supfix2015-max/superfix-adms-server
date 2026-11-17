@@ -39,7 +39,7 @@ class RawLog extends Model
         'parsed_data' => 'json',
     ];
 
-    const ENDPOINTS = ['/iclock/cdata', '/iclock/test', '/iclock/getrequest', '/iclock/devicecmd', '/api/device/logs'];
+    const ENDPOINTS = ['/iclock/cdata', '/iclock/test', '/iclock/ping', '/iclock/getrequest', '/iclock/devicecmd', '/api/device/logs'];
 
     const STATUSES = ['received', 'processing', 'processed', 'failed'];
 
