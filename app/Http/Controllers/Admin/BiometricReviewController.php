@@ -71,8 +71,10 @@ final class BiometricReviewController extends Controller
                 ->selectRaw('COUNT_BIG(*) AS total')->groupBy('state')->pluck('total','state');
         }
         $enabled = (bool) config('zkteco.fingerprint_review_dispatch',false);
+        $registration = app(\App\Services\DeviceEmployeeRegistrationService::class);
+        $duplicateCount = $registration->ready() ? $registration->rows()->where('state','duplicate')->count() : 0;
         return response()->view('admin.biometrics.review',compact(
-            'rows','search','count','ready','targets','decisions','counts','enabled','directoryNames'
+            'rows','search','count','ready','targets','decisions','counts','enabled','directoryNames','duplicateCount'
         ))->header('Cache-Control','private, no-store');
     }
 
