@@ -77,6 +77,11 @@ final class DeviceEmployeeRegistrationService
             return ['parsed'=>$parsed,'observed'=>0];
         }
         $accepted=[]; $observed=0;
+        $batchNames=[];
+        foreach ($parsed['records'] as $candidate) {
+            $identity=self::identity($candidate,$table);
+            if ($identity!==null) $batchNames[$identity[0]][mb_strtolower($identity[1])]=true;
+        }
         foreach ($parsed['records'] as $record) {
             $identity=self::identity($record,$table);
             if ($identity===null) {
@@ -102,7 +107,10 @@ final class DeviceEmployeeRegistrationService
             },3);
             $observed++;
             $state=$observation->state;
-            if ($state==='pending' && $trusted && self::writableName($name) && config('zkteco.employee_registration_auto',false)) {
+            if ($state==='pending' && $trusted && self::writableName($name) && config('zkteco.employee_registration_auto',false)
+                && count($batchNames[$code] ?? [])===1
+                && !$this->rows()->where('employee_code',$code)->where('id','<>',$observation->id)
+                    ->whereIn('state',['pending','duplicate'])->where('incoming_name','<>',$name)->exists()) {
                 try {
                     $result=$this->register($device,$code,$name);
                     $state=$result->state;
