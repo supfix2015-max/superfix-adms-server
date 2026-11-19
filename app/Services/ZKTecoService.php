@@ -65,7 +65,7 @@ class ZKTecoService
                 return $response;
             }
 
-            $result = $this->processCdataPayload($device, $context);
+            $result = $this->processCdataPayload($device, $context, $request);
 
             $this->finishRawLog(
                 $rawLog,
@@ -379,7 +379,7 @@ class ZKTecoService
         }
     }
 
-    private function processCdataPayload(Device $device, array $context): array
+    private function processCdataPayload(Device $device, array $context, ?Request $request = null): array
     {
         if ($context['raw_body'] === '') {
             return $this->mergeDeviceMetadata($device, $context);
@@ -392,6 +392,22 @@ class ZKTecoService
 
         $acceptUserPayload = $this->shouldSyncUsersFromContext($context);
         $parsedUserPayload = $this->payloadParser->parseUserPayload($context['raw_body']);
+        $observed = 0;
+        if ($request && $parsedUserPayload['records'] !== []) {
+            $registration = app(DeviceEmployeeRegistrationService::class);
+            $trusted = app(FingerprintReviewService::class)->authorized($request,$device,$this->hasAuthenticatedDeviceToken($request,$device));
+            try {
+                $result = $registration->inspect($device,$parsedUserPayload,strtoupper(trim((string)($context['table'] ?? ''))),$trusted);
+                $parsedUserPayload = $result['parsed'];
+                $observed = $result['observed'];
+            } catch (\Illuminate\Database\QueryException $e) {
+                // Keep the raw upload for investigation; do not let a registration
+                // failure overwrite the existing employee through the legacy route.
+                $observed = count($parsedUserPayload['records']);
+                $parsedUserPayload = ['records'=>[], 'errors'=>[]];
+                Log::warning('Device registration review unavailable', ['device_id'=>$device->id]);
+            }
+        }
         $userPayload = $acceptUserPayload
             ? $parsedUserPayload
             : ['records' => [], 'errors' => []];
@@ -422,6 +438,14 @@ class ZKTecoService
 
         if ($biometricPayload['records'] !== []) {
             return $this->storeBiometrics($device, $context, $biometricPayload);
+        }
+
+        if ($observed > 0) {
+            return [
+                'type'=>'employee_registration', 'count'=>$observed, 'warnings'=>[],
+                'metadata'=>['table'=>$context['table'] ?? 'USERINFO','registration_observations'=>$observed],
+                'response'=>"OK:{$observed}\r\n",
+            ];
         }
 
         if (! $acceptUserPayload && $parsedUserPayload['records'] !== []) {
