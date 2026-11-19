@@ -51,6 +51,7 @@
             'id' => 'devices', 'label' => 'Devices & Commands', 'icon' => 'bi-hdd-network',
             'children' => [
                 ['label' => 'Device Fleet', 'icon' => 'bi-hdd-stack', 'children' => [
+                    ['label' => 'Device Employee List', 'icon' => 'bi-people', 'route' => route('admin.devices.roster-preview'), 'matches' => ['admin.devices.roster-preview']],
                     ['label' => 'Devices & License Flags', 'icon' => 'bi-hdd-network', 'route' => route('admin.devices.index'), 'matches' => ['admin.devices.index', 'admin.devices.show', 'admin.devices.edit']],
                     ['label' => 'Device Connectivity', 'icon' => 'bi-broadcast', 'route' => route('admin.device-connectivity.index'), 'matches' => ['admin.device-connectivity.index']],
                     ['label' => 'Original Device Registry', 'icon' => 'bi-database', 'route' => route('admin.legacy.index', ['tab' => 'devices']), 'matches' => ['admin.legacy.index'], 'tab' => 'devices'],
