@@ -7,6 +7,7 @@ use App\Http\Controllers\Admin\CommandController;
 use App\Http\Controllers\Admin\CredentialController;
 use App\Http\Controllers\Admin\DashboardController;
 use App\Http\Controllers\Admin\DeviceController;
+use App\Http\Controllers\Admin\DeviceRosterPreviewController;
 use App\Http\Controllers\Admin\DeviceConnectionStatusController;
 use App\Http\Controllers\Admin\EmployeeController;
 use App\Http\Controllers\Admin\LogController;
@@ -59,6 +60,9 @@ Route::middleware(['auth', 'admin'])->prefix('admin')->name('admin.')->group(fun
     Route::get('/device-connectivity', [DeviceConnectionStatusController::class, 'index'])->name('device-connectivity.index');
     Route::get('/connectivity', [DeviceConnectionStatusController::class, 'index'])->name('connectivity.index');
 
+    Route::get('devices/roster-preview', [DeviceRosterPreviewController::class, 'index'])->name('devices.roster-preview');
+    Route::post('devices/roster-preview/start', [DeviceRosterPreviewController::class, 'start'])->name('devices.roster-preview.start');
+    Route::post('devices/roster-preview/close', [DeviceRosterPreviewController::class, 'close'])->name('devices.roster-preview.close');
     Route::resource('devices', DeviceController::class);
     Route::post('devices/{device}/refresh-token', [DeviceController::class, 'refreshToken'])->name('devices.refresh-token');
 
