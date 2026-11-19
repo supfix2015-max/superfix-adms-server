@@ -88,6 +88,7 @@ final class FingerprintReviewService
 
     private function sourceFingerprintMatches(EmployeeBiometric $row): bool
     {
+        if (app(DeviceEmployeeRegistrationService::class)->blocked((string)$row->employee_code,(int)$row->device_id)) return false;
         if (! $row->employee_id) return true; // HR directory must still match exactly.
         $employee = Employee::query()->find($row->employee_id);
         if (! $employee || ! Employee::isSyncEligibleStatus($employee->status)
@@ -154,6 +155,9 @@ final class FingerprintReviewService
                 $target = $targets->has($id) ? Device::query()->whereKey($id)->lockForUpdate()->first() : null;
                 if (! $target || $id === (int) $source->id) $this->invalid('Select only registered target devices other than the source.');
                 if ($prior->contains(fn ($r) => (int) $r->target_device_id === $id)) continue;
+                if (app(DeviceEmployeeRegistrationService::class)->blocked((string)$row->employee_code,$id)) {
+                    $this->invalid('Target device has an unresolved employee registration conflict.');
+                }
                 $state = $this->existingState($row, $id, $hash);
                 if ($state === null) {
                     // A different source may have queued the same employee/slot.
@@ -260,6 +264,10 @@ final class FingerprintReviewService
             $source = Device::query()->find($row->device_id);
             if (! $source || ! $this->registered($source)) {
                 $this->setState($job->id,'stale','source_not_registered');
+                return null;
+            }
+            if (app(DeviceEmployeeRegistrationService::class)->blocked((string)$row->employee_code,(int)$device->id)) {
+                $this->setState($job->id,'conflict','employee_registration_conflict');
                 return null;
             }
             if ($this->algorithmMismatch($source,$device)) {
