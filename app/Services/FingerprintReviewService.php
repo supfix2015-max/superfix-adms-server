@@ -185,11 +185,31 @@ final class FingerprintReviewService
         // Explicit static serial/IP mapping, never inferred from heartbeat or
         // forwarded headers supplied by an untrusted client. No serial-only release.
         $mapping = (array) config('zkteco.fingerprint_review_trusted_sources', []);
-        $ip = (string) $request->ip();
         $expected = $mapping[(string) $device->serial_number] ?? null;
-        return is_string($expected) && filter_var($ip, FILTER_VALIDATE_IP) !== false
-            && ! in_array($ip, ['127.0.0.1','::1','0.0.0.0','::'], true)
-            && hash_equals($expected, $ip);
+        if (! is_string($expected) || filter_var($expected,FILTER_VALIDATE_IP) === false) return false;
+        $proxies = (array) config('zkteco.fingerprint_review_trusted_proxies', []);
+        // Never treat the reverse proxy or a wildcard as a device identity.
+        if (in_array($expected,$proxies,true) || in_array($expected,['127.0.0.1','::1','0.0.0.0','::'],true)) return false;
+        $ip = self::verifiedSourceIp((string)$request->server('REMOTE_ADDR'), (string)$request->header('X-Forwarded-For',''), $proxies);
+        return $ip !== null && hash_equals($expected,$ip);
+    }
+
+    public static function verifiedSourceIp(string $remote, string $forwarded, array $proxies): ?string
+    {
+        if (filter_var($remote,FILTER_VALIDATE_IP) === false) return null;
+        if (! in_array($remote,$proxies,true)) {
+            // Ignore attacker-provided forwarded headers on direct requests.
+            return $remote;
+        }
+        // Explicitly trusted proxies must append/sanitize client IP. Walk
+        // right-to-left; never believe an arbitrary leftmost forwarded value.
+        $chain = array_map('trim',explode(',',$forwarded));
+        if (count($chain) > 16) return null;
+        foreach (array_reverse($chain) as $hop) {
+            if (filter_var($hop,FILTER_VALIDATE_IP) === false) return null;
+            if (! in_array($hop,$proxies,true)) return $hop;
+        }
+        return null;
     }
 
     public static function wireId(array $record): ?int
