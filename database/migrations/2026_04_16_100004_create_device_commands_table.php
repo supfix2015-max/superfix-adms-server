@@ -15,18 +15,10 @@ return new class extends Migration
             $table->id();
             $table->foreignId('device_id')->constrained('devices')->onDelete('cascade');
             $table->foreignId('created_by')->nullable()->constrained('users')->onDelete('set null');
-            $table->enum('command', [
-                'RESTART',
-                'CLEAR_LOGS',
-                'SET_TIME',
-                'UPDATE_TIME',
-                'ENABLE_ATTENDANCE',
-                'DISABLE_ATTENDANCE',
-                'SET_ATTENDANCE_MODE',
-                'SYNC_EMPLOYEES',
-            ])->index();
-            $table->json('parameters')->nullable();
-            $table->enum('status', ['pending', 'sent', 'executed', 'failed'])->default('pending')->index();
+            // ZKTeco command types evolve; SQL Server uses NVARCHAR, not
+            // an enum/constraint inherited from the old MySQL schema.
+            $table->string('command', 64)->index();
+            $table->string('status', 32)->default('pending')->index();
             $table->timestamp('executed_at')->nullable();
             $table->string('response')->nullable();
             $table->string('error_message')->nullable();

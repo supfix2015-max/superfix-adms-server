@@ -3,6 +3,7 @@
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\DB;
 
 return new class extends Migration
 {
@@ -102,10 +103,15 @@ return new class extends Migration
         });
 
         Schema::table('employees', function (Blueprint $table): void {
-            $table->unique('sync_uid', 'employees_sync_uid_unique');
+            // Filtered unique index is created below for SQL Server nullable sync_uid.
             $table->index(['sync_enabled', 'status'], 'employees_sync_enabled_status_index');
             $table->index(['status', 'last_sync_validated_at'], 'employees_sync_validated_index');
         });
+
+        DB::statement(
+            'CREATE UNIQUE INDEX [employees_sync_uid_unique] ON [dbo].[employees] ([sync_uid]) '
+            .'WHERE [sync_uid] IS NOT NULL'
+        );
 
         Schema::table('device_commands', function (Blueprint $table): void {
             $table->index(['device_id', 'fingerprint', 'status'], 'device_commands_fingerprint_status_index');
@@ -130,8 +136,8 @@ return new class extends Migration
             $table->dropIndex('device_commands_sync_status_index');
         });
 
+        DB::statement('DROP INDEX [employees_sync_uid_unique] ON [dbo].[employees]');
         Schema::table('employees', function (Blueprint $table): void {
-            $table->dropUnique('employees_sync_uid_unique');
             $table->dropIndex('employees_sync_enabled_status_index');
             $table->dropIndex('employees_sync_validated_index');
         });

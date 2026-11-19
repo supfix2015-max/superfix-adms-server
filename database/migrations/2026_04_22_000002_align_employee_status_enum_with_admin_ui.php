@@ -19,13 +19,6 @@ return new class extends Migration
                 'updated_at' => now(),
             ]);
 
-        $driver = DB::getDriverName();
-
-        if (in_array($driver, ['mysql', 'mariadb'], true)) {
-            DB::statement(
-                "ALTER TABLE `employees` MODIFY `status` ENUM('active','inactive','suspended') NOT NULL DEFAULT 'active'"
-            );
-        }
     }
 
     public function down(): void
@@ -41,12 +34,5 @@ return new class extends Migration
                 'updated_at' => now(),
             ]);
 
-        $driver = DB::getDriverName();
-
-        if (in_array($driver, ['mysql', 'mariadb'], true)) {
-            DB::statement(
-                "ALTER TABLE `employees` MODIFY `status` ENUM('active','inactive','on_leave') NOT NULL DEFAULT 'active'"
-            );
-        }
     }
 };

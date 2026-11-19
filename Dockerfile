@@ -15,7 +15,7 @@ RUN apt-get update \
      libfreetype6-dev libjpeg62-turbo-dev libpng-dev libzip-dev libicu-dev \
      libonig-dev libxml2-dev \
   && docker-php-ext-configure gd --with-freetype --with-jpeg \
-  && docker-php-ext-install -j"$(nproc)" pdo_mysql mbstring zip gd bcmath intl pcntl opcache \
+  && docker-php-ext-install -j"$(nproc)" mbstring zip gd bcmath intl pcntl opcache \
   && curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /usr/share/keyrings/microsoft-prod.gpg \
   && DEB_ARCH="$(dpkg --print-architecture)" \
   && echo "deb [arch=${DEB_ARCH} signed-by=/usr/share/keyrings/microsoft-prod.gpg] https://packages.microsoft.com/debian/12/prod bookworm main" > /etc/apt/sources.list.d/microsoft-prod.list \
@@ -40,6 +40,8 @@ RUN mkdir -p storage/app/public storage/framework/cache/data storage/framework/s
   && php -l app/Services/LegacyAttendanceValueMapper.php \
   && php -l app/Services/LegacyDashboardService.php \
   && php -l config/legacy_attendance.php \
+  && php -l config/database.php \
+  && php -l app/Console/Commands/AuditSqlServerOnlyApplicationCommand.php \
   && chown -R www-data:www-data storage bootstrap/cache
 COPY docker/nginx.conf /etc/nginx/sites-available/default
 COPY docker/supervisord.conf /etc/supervisor/conf.d/superfix-adms.conf

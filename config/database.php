@@ -2,6 +2,15 @@
 
 use Illuminate\Support\Str;
 
+// Prevent accidental Laravel migrations/writes into the original historical
+// Att2000_V4 schema. Only the separate AttendanceCloud DB hosts app tables.
+$operationalDatabase = trim((string) env('ADMS_SQLSRV_DATABASE', ''));
+$historicalDatabase = trim((string) env('LEGACY_SQLSRV_DATABASE', 'Att2000_V4'));
+
+if ($operationalDatabase !== '' && strcasecmp($operationalDatabase, $historicalDatabase) === 0) {
+    throw new LogicException('Unsafe SQL Server configuration: operational ADMS database cannot be the original attendance database.');
+}
+
 return [
 
     /*
@@ -15,7 +24,7 @@ return [
     |
     */
 
-    'default' => env('DB_CONNECTION', 'mysql'),
+    'default' => env('DB_CONNECTION', 'sqlsrv'),
 
     /*
     |--------------------------------------------------------------------------
@@ -43,25 +52,6 @@ return [
             'foreign_key_constraints' => env('DB_FOREIGN_KEYS', true),
         ],
 
-        'mysql' => [
-            'driver' => 'mysql',
-            'url' => env('DATABASE_URL'),
-            'host' => env('DB_HOST', '127.0.0.1'),
-            'port' => env('DB_PORT', '3306'),
-            'database' => env('DB_DATABASE', 'forge'),
-            'username' => env('DB_USERNAME', 'forge'),
-            'password' => env('DB_PASSWORD', ''),
-            'unix_socket' => env('DB_SOCKET', ''),
-            'charset' => 'utf8mb4',
-            'collation' => 'utf8mb4_unicode_ci',
-            'prefix' => '',
-            'prefix_indexes' => true,
-            'strict' => true,
-            'engine' => null,
-            'options' => extension_loaded('pdo_mysql') ? array_filter([
-                PDO::MYSQL_ATTR_SSL_CA => env('MYSQL_ATTR_SSL_CA'),
-            ]) : [],
-        ],
 
         'pgsql' => [
             'driver' => 'pgsql',
@@ -78,7 +68,7 @@ return [
             'sslmode' => 'prefer',
         ],
 
-        // Optional legacy attendance database. The ADMS application's primary DB remains MySQL.
+        // Legacy Att2000_V4 is the original source. Operational Laravel tables reside in a separate SQL Server database.
         // Dedicated limited INSERT login for opt-in pilot. Never use sa.
         'legacy_sqlsrv_writer' => [
             'driver' => 'sqlsrv',
@@ -110,17 +100,18 @@ return [
 
         'sqlsrv' => [
             'driver' => 'sqlsrv',
-            'url' => env('DATABASE_URL'),
-            'host' => env('DB_HOST', 'localhost'),
-            'port' => env('DB_PORT', '1433'),
-            'database' => env('DB_DATABASE', 'forge'),
-            'username' => env('DB_USERNAME', 'forge'),
-            'password' => env('DB_PASSWORD', ''),
+            // Dedicated, separately permissioned Laravel database. Never point
+            // these models or migrations at original Att2000_V4.
+            'host' => env('ADMS_SQLSRV_HOST', ''),
+            'port' => env('ADMS_SQLSRV_PORT', '1433'),
+            'database' => env('ADMS_SQLSRV_DATABASE', ''),
+            'username' => env('ADMS_SQLSRV_USERNAME', ''),
+            'password' => env('ADMS_SQLSRV_PASSWORD', ''),
             'charset' => 'utf8',
             'prefix' => '',
             'prefix_indexes' => true,
-            // 'encrypt' => env('DB_ENCRYPT', 'yes'),
-            // 'trust_server_certificate' => env('DB_TRUST_SERVER_CERTIFICATE', 'false'),
+            'encrypt' => env('ADMS_SQLSRV_ENCRYPT', 'yes'),
+            'trust_server_certificate' => env('ADMS_SQLSRV_TRUST_SERVER_CERTIFICATE', 'false'),
         ],
 
     ],
