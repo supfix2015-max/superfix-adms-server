@@ -212,6 +212,13 @@ final class FingerprintReviewService
         return null;
     }
 
+    public static function isLegacyFingerprintPush(\App\Models\DeviceCommand $command): bool
+    {
+        $type = strtolower(trim((string) ($command->parameters['biometric_type'] ?? '')));
+        if ($command->command === 'SYNC_BIOMETRICS' && ! in_array($type,['face','photo'],true)) return true;
+        return preg_match('/\bDATA\s+UPDATE\s+FINGERTMP\b/i', (string)$command->command.' '.(string)$command->command_payload) === 1;
+    }
+
     public static function wireId(array $record): ?int
     {
         $raw = trim((string) ($record['ID'] ?? $record['CmdID'] ?? $record['id'] ?? ''));
