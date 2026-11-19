@@ -151,10 +151,21 @@ final class FingerprintReviewService
             $added = 0;
             foreach (array_unique($targetIds) as $id) {
                 $id = (int) $id;
-                $target = $targets->get($id);
+                $target = $targets->has($id) ? Device::query()->whereKey($id)->lockForUpdate()->first() : null;
                 if (! $target || $id === (int) $source->id) $this->invalid('Select only registered target devices other than the source.');
                 if ($prior->contains(fn ($r) => (int) $r->target_device_id === $id)) continue;
                 $state = $this->existingState($row, $id, $hash);
+                if ($state === null) {
+                    // A different source may have queued the same employee/slot.
+                    // Do not permit two versions to overwrite one another.
+                    $other = $this->rows()->where('target_device_id',$id)
+                        ->where('employee_code',$row->employee_code)->where('finger_slot',(int)$row->template_index)
+                        ->whereIn('state',['pending_user','sent_user','pending_fp','sent_fp','done','already_present','unknown'])
+                        ->orderBy('id')->get(['version_hash','state']);
+                    if ($other->contains(fn ($r)=>! hash_equals(trim($r->version_hash),$hash))) $state = 'conflict';
+                    elseif ($other->contains(fn ($r)=>in_array($r->state,['done','already_present'],true))) $state = 'already_present';
+                    elseif ($other->isNotEmpty()) $state = 'conflict';
+                }
                 if ($state === null && $this->algorithmMismatch($source, $target)) $state = 'conflict';
                 $this->rows()->insert($base + [
                     'target_device_id'=>$id,'target_serial'=>$target->serial_number,'user_name'=>$name,
@@ -164,7 +175,7 @@ final class FingerprintReviewService
                 $added++;
             }
             return $added;
-        });
+        }, 3);
     }
 
     public function authorized(Request $request, Device $device, bool $tokenVerified): bool
@@ -229,6 +240,14 @@ final class FingerprintReviewService
                 return null;
             }
             $state = $this->existingState($row,(int)$device->id,trim($job->version_hash));
+            if ($state === null) {
+                $prior = $this->rows()->where('target_device_id',$device->id)->where('id','<',$job->id)
+                    ->where('employee_code',$job->employee_code)->where('finger_slot',$job->finger_slot)
+                    ->whereIn('state',['sent_fp','done','already_present','unknown'])->get(['version_hash','state']);
+                if ($prior->contains(fn ($r)=>! hash_equals(trim($r->version_hash),trim($job->version_hash)))) $state = 'conflict';
+                elseif ($prior->contains(fn ($r)=>in_array($r->state,['done','already_present'],true))) $state = 'already_present';
+                elseif ($prior->isNotEmpty()) $state = 'conflict';
+            }
             if ($state !== null) {
                 $this->setState($job->id,$state);
                 return null;
@@ -258,7 +277,7 @@ final class FingerprintReviewService
             }
             $this->setState($job->id,$isUser?'sent_user':'sent_fp',null,true);
             return ['id'=>$wire,'kind'=>$isUser?'USERINFO':'FINGERTMP','payload'=>$payload];
-        });
+        }, 3);
     }
 
     public function acknowledge(Device $device, array $record): bool
