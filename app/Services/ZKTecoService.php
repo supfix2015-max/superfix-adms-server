@@ -34,6 +34,12 @@ class ZKTecoService
     public function handleCdata(Request $request): string
     {
         $context = $this->buildContext($request, '/iclock/cdata');
+        $preview = app(DeviceRosterPreviewService::class);
+        if ($preview->hasActiveCapture($request,$context)) {
+            $previewDevice = $this->resolveDevice($request,$context);
+            $viewOnly = $preview->capture($request,$previewDevice,$context,$this->payloadParser);
+            if ($viewOnly !== null) return $viewOnly;
+        }
         $rawLog = $this->createRawLog(null, $context);
 
         try {
@@ -176,6 +182,15 @@ class ZKTecoService
             $fingerprintAuthorization = $fingerprintReview->authorizationMode($request, $device, $this->hasAuthenticatedDeviceToken($request, $device));
             if ($fingerprintAuthorization !== null) {
                 try {
+                    $preview = app(DeviceRosterPreviewService::class)->poll($device);
+                    if ($preview !== null) {
+                        $this->finishRawLog($rawLog,'processed',$preview['hold']?0:1,[
+                            'mode'=>$preview['hold']?'roster_preview_hold':'roster_preview_query',
+                            'command_id'=>$preview['id'] ?? null,
+                            'authorization_mode'=>$fingerprintAuthorization,
+                        ]);
+                        return $preview['hold']?"OK\r\n":$preview['payload']."\r\n";
+                    }
                     $approved = $fingerprintReview->next($device);
                     if ($approved !== null) {
                         $this->finishRawLog($rawLog, 'processed', 1, [
@@ -269,6 +284,11 @@ class ZKTecoService
             // correlated by the reserved ID, target and its verified source.
             $fingerprintReview = app(FingerprintReviewService::class);
             $allReplyRecords = $this->extractCommandReplyRecords($context);
+            if ($fingerprintReview->authorizationMode($request,$device,$this->hasAuthenticatedDeviceToken($request,$device)) !== null
+                && app(DeviceRosterPreviewService::class)->acknowledge($device,$allReplyRecords)) {
+                $this->finishRawLog($rawLog,'processed',1,['mode'=>'roster_preview_ack']);
+                return "OK\r\n";
+            }
             $scopedRecords = array_values(array_filter($allReplyRecords,
                 static fn (array $record): bool => FingerprintReviewService::wireId($record) !== null));
             if ($scopedRecords !== []) {
