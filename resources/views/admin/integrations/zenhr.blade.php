@@ -131,6 +131,12 @@
                 <button type="submit" class="btn btn-primary">Search</button>
                 <a class="btn btn-outline-secondary" href="{{ route('admin.zenhr.index') }}#pending-attendance">Clear</a>
             </form>
+            @unless ($directoryAvailable)
+                <div class="alert alert-warning small">Legacy directory unavailable. Badge and device serial remain available; names and name search may be incomplete.</div>
+            @endunless
+            @if ($pendingSearchLimited)
+                <div class="alert alert-info small">Name/alias search is limited to 500 matching directory IDs per type. Refine the search for complete results.</div>
+            @endif
             @if ($pendingRows === null)
                 <div class="alert alert-warning mb-0">Outbox storage is not provisioned.</div>
             @else
