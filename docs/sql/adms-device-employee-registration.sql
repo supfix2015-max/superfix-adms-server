@@ -25,7 +25,7 @@ END;
 GO
 CREATE OR ALTER PROCEDURE adms.register_device_employee
     @badge nvarchar(32), @name nvarchar(160), @serial nvarchar(80)
-WITH EXECUTE AS OWNER
+WITH EXECUTE AS 'dbo'
 AS
 BEGIN
     SET NOCOUNT ON;
