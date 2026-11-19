@@ -76,6 +76,12 @@ class CommandService
             return null;
         }
 
+        if (FingerprintReviewService::isLegacyFingerprintPush($command)) {
+            $command->forceFill(['status'=>DeviceCommand::STATUS_FAILED,'failed_at'=>now(),
+                'error_message'=>'Fingerprint distribution requires the approval inbox.'])->save();
+            return null;
+        }
+
         try {
             $payload = $this->sanitizeOutgoingPayload($this->formatter->format($command));
         } catch (\Throwable $exception) {
