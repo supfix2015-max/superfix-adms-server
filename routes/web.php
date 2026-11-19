@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Admin\AttendanceController;
 use App\Http\Controllers\Admin\BiometricReviewController;
+use App\Http\Controllers\Admin\DeviceEmployeeRegistrationController;
 use App\Http\Controllers\Admin\CommandController;
 use App\Http\Controllers\Admin\CredentialController;
 use App\Http\Controllers\Admin\DashboardController;
@@ -23,6 +24,8 @@ Route::get('/', function () {
 
 Route::middleware(['auth', 'admin'])->prefix('admin')->name('admin.')->group(function () {
     Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
+    Route::get('/employees/device-registration', [DeviceEmployeeRegistrationController::class, 'index'])->name('employees.device-registration');
+    Route::post('/employees/device-registration/{registration}', [DeviceEmployeeRegistrationController::class, 'approve'])->whereNumber('registration')->name('employees.device-registration.approve');
     Route::get('/biometrics/review', [BiometricReviewController::class, 'index'])->name('biometrics.review');
     Route::post('/biometrics/review/{biometric}', [BiometricReviewController::class, 'decide'])->whereNumber('biometric')->name('biometrics.decide');
     // AT2-only ZenHR integration; controller enforces host + enable flag.
