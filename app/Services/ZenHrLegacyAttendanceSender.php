@@ -17,7 +17,7 @@ use RuntimeException;
  * - request_time matches old BioWeb local VerifyTime (legacy TimezoneOffset empty).
  *   Live observed +0400 caused a four-hour earlier time in ZenHR UI.
  * - attendance_transaction_id == MySettings.AttendanceId
- * - added_by == 2; bulk batches up to 10; HTTP 202 means accepted
+ * - added_by == 2; bulk batches up to 15; HTTP 202 means accepted
  *
  * Does not touch dbo.Attendance.Exported or legacy service settings.
  * No unattended delivery in this version.
@@ -25,7 +25,7 @@ use RuntimeException;
 final class ZenHrLegacyAttendanceSender
 {
     private const OUTBOX = 'adms.zenhr_attendance_outbox';
-    private const MAX_LIMIT = 10;
+    public const MAX_LIMIT = 15;
 
     public function preview(int $limit = 1): array
     {
@@ -129,7 +129,7 @@ final class ZenHrLegacyAttendanceSender
             throw new RuntimeException('Set old BioWeb MySettings.AttendanceId as ZENHR_ATTENDANCE_TRANSACTION_ID.');
         }
         if (count($selected) < 1 || count($selected) > self::MAX_LIMIT) {
-            throw new RuntimeException('Send limit must be between 1 and 10.');
+            throw new RuntimeException('Send limit must be between 1 and '.self::MAX_LIMIT.'.');
         }
 
         $keys = [];
