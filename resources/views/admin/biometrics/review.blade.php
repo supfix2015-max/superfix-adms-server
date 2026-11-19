@@ -8,6 +8,9 @@
 <div class="card shadow-sm p-4">
     @if (session('success')) <div class="alert alert-success">{{ session('success') }}</div> @endif
     @if ($errors->any()) <div class="alert alert-danger">{{ $errors->first() }}</div> @endif
+    @if ($duplicateCount > 0)
+        <div class="alert alert-danger"><strong>{{ $duplicateCount }} duplicate employee ID warning(s).</strong> <a href="{{ route('admin.employees.device-registration',['state'=>'duplicate']) }}">Review employee registrations before distributing fingerprints.</a></div>
+    @endif
     <div class="row g-3 mb-3">
         @foreach ([
             'Received templates' => $count,
