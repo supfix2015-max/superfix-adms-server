@@ -43,43 +43,81 @@ final class ZenHrIntegrationController extends Controller
         ]);
         $pendingSearch = trim((string) ($filters['pending_search'] ?? ''));
         $pendingRows = null;
+        $pendingSearchLimited = false;
+        $directoryAvailable = true;
 
         if ($outboxStats['ready']) {
             $db = DB::connection('sqlsrv');
-            // Only unique directory matches: ambiguous badges/serials must not
-            // duplicate an outbox row or attribute a punch to the wrong person.
-            $employees = $db->table('dbo.Employee')->select('BadgeNumber')
-                ->selectRaw('MIN(Id) AS CanonicalId')
-                ->groupBy('BadgeNumber')->havingRaw('COUNT_BIG(*) = 1');
-            $devices = $db->table('dbo.Device')->select('DeviceSerialNumber')
-                ->selectRaw('MIN(Id) AS CanonicalId')
-                ->groupBy('DeviceSerialNumber')->havingRaw('COUNT_BIG(*) = 1');
-            $query = $db->table('adms.zenhr_attendance_outbox as o')
-                ->leftJoinSub($employees, 'em', 'em.BadgeNumber', '=', 'o.badge_number')
-                ->leftJoin('dbo.Employee as e', 'e.Id', '=', 'em.CanonicalId')
-                ->leftJoinSub($devices, 'dm', 'dm.DeviceSerialNumber', '=', 'o.device_serial')
-                ->leftJoin('dbo.Device as d', 'd.Id', '=', 'dm.CanonicalId')
-                ->where('o.delivery_state', 'pending')
+            $legacy = DB::connection('legacy_sqlsrv');
+            $query = $db->table('adms.zenhr_attendance_outbox')
+                ->where('delivery_state', 'pending')
                 ->select([
-                    'o.badge_number', 'e.NAME as employee_name',
-                    'o.device_serial', 'd.DeviceAliasName as device_alias',
-                    'o.punched_at_local', 'o.direction', 'o.source_kind',
-                    'o.attempts', 'o.last_error_code',
+                    'badge_number', 'device_serial', 'punched_at_local',
+                    'direction', 'source_kind', 'attempts', 'last_error_code',
                 ]);
 
             if ($pendingSearch !== '') {
                 $pattern = '%'.$pendingSearch.'%';
-                $query->where(function ($q) use ($pattern) {
-                    $q->where('o.badge_number', 'like', $pattern)
-                        ->orWhere('e.NAME', 'like', $pattern)
-                        ->orWhere('o.device_serial', 'like', $pattern)
-                        ->orWhere('d.DeviceAliasName', 'like', $pattern);
+                $badgeMatches = [];
+                $serialMatches = [];
+                try {
+                    // Only unique directory identities. Bound search parameters
+                    // well below SQL Server's 2100-parameter limit.
+                    $badgeMatches = $legacy->table('dbo.Employee')
+                        ->select('BadgeNumber')->whereNotNull('BadgeNumber')
+                        ->groupBy('BadgeNumber')->havingRaw('COUNT_BIG(*) = 1')
+                        ->havingRaw('MAX(NAME) LIKE ?', [$pattern])
+                        ->orderBy('BadgeNumber')->limit(501)->pluck('BadgeNumber')->all();
+                    $serialMatches = $legacy->table('dbo.Device')
+                        ->select('DeviceSerialNumber')->whereNotNull('DeviceSerialNumber')
+                        ->groupBy('DeviceSerialNumber')->havingRaw('COUNT_BIG(*) = 1')
+                        ->havingRaw('MAX(DeviceAliasName) LIKE ?', [$pattern])
+                        ->orderBy('DeviceSerialNumber')->limit(501)->pluck('DeviceSerialNumber')->all();
+                    $pendingSearchLimited = count($badgeMatches) > 500 || count($serialMatches) > 500;
+                    $badgeMatches = array_slice($badgeMatches, 0, 500);
+                    $serialMatches = array_slice($serialMatches, 0, 500);
+                } catch (\Illuminate\Database\QueryException $e) {
+                    $directoryAvailable = false;
+                    $badgeMatches = $serialMatches = [];
+                }
+
+                $query->where(function ($q) use ($pattern, $badgeMatches, $serialMatches) {
+                    $q->where('badge_number', 'like', $pattern)
+                        ->orWhere('device_serial', 'like', $pattern);
+                    if ($badgeMatches !== []) $q->orWhereIn('badge_number', $badgeMatches);
+                    if ($serialMatches !== []) $q->orWhereIn('device_serial', $serialMatches);
                 });
             }
 
-            $pendingRows = $query->orderBy('o.punched_at_local')
-                ->orderBy('o.event_key')
-                ->simplePaginate(50, ['*'], 'pending_page')->withQueryString();
+            $pendingRows = $query->orderBy('punched_at_local')
+                ->orderBy('event_key')->simplePaginate(50, ['*'], 'pending_page')->withQueryString();
+
+            // Fetch directory names only for the current page via the existing
+            // read-only legacy connection; no cross-connection SQL joins.
+            $employeeNames = collect();
+            $deviceAliases = collect();
+            $rows = $pendingRows->getCollection();
+            if ($directoryAvailable && $rows->isNotEmpty()) {
+                try {
+                    $employeeNames = $legacy->table('dbo.Employee')->select('BadgeNumber')
+                        ->selectRaw('MAX(NAME) AS employee_name')
+                        ->whereIn('BadgeNumber', $rows->pluck('badge_number')->unique()->values()->all())
+                        ->groupBy('BadgeNumber')->havingRaw('COUNT_BIG(*) = 1')
+                        ->pluck('employee_name', 'BadgeNumber');
+                    $deviceAliases = $legacy->table('dbo.Device')->select('DeviceSerialNumber')
+                        ->selectRaw('MAX(DeviceAliasName) AS device_alias')
+                        ->whereIn('DeviceSerialNumber', $rows->pluck('device_serial')->unique()->values()->all())
+                        ->groupBy('DeviceSerialNumber')->havingRaw('COUNT_BIG(*) = 1')
+                        ->pluck('device_alias', 'DeviceSerialNumber');
+                } catch (\Illuminate\Database\QueryException $e) {
+                    $directoryAvailable = false;
+                }
+            }
+
+            foreach ($rows as $row) {
+                $row->employee_name = $employeeNames->get($row->badge_number);
+                $row->device_alias = $deviceAliases->get($row->device_serial);
+            }
         }
 
         return view('admin.integrations.zenhr', [
@@ -90,6 +128,8 @@ final class ZenHrIntegrationController extends Controller
             'outboxStats' => $outboxStats,
             'pendingRows' => $pendingRows,
             'pendingSearch' => $pendingSearch,
+            'pendingSearchLimited' => $pendingSearchLimited,
+            'directoryAvailable' => $directoryAvailable,
             'autoSendConfigured' => (bool) config('zenhr.attendance_auto_send', false)
                 && (bool) config('zenhr.attendance_post_enabled', false)
                 && (bool) config('zenhr.outbox_auto_collect', false),
