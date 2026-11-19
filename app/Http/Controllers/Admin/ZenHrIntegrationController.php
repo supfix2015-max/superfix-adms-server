@@ -8,6 +8,7 @@ use App\Services\ZenHrAttendanceOutbox;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Contracts\View\View;
 use Throwable;
 
@@ -36,12 +37,62 @@ final class ZenHrIntegrationController extends Controller
     {
         $this->guardAt2($request);
 
+        $outboxStats = $outbox->stats();
+        $filters = $request->validate([
+            'pending_search' => ['nullable', 'string', 'max:80'],
+        ]);
+        $pendingSearch = trim((string) ($filters['pending_search'] ?? ''));
+        $pendingRows = null;
+
+        if ($outboxStats['ready']) {
+            $db = DB::connection('sqlsrv');
+            // Only unique directory matches: ambiguous badges/serials must not
+            // duplicate an outbox row or attribute a punch to the wrong person.
+            $employees = $db->table('dbo.Employee')->select('BadgeNumber')
+                ->selectRaw('MIN(Id) AS CanonicalId')
+                ->groupBy('BadgeNumber')->havingRaw('COUNT_BIG(*) = 1');
+            $devices = $db->table('dbo.Device')->select('DeviceSerialNumber')
+                ->selectRaw('MIN(Id) AS CanonicalId')
+                ->groupBy('DeviceSerialNumber')->havingRaw('COUNT_BIG(*) = 1');
+            $query = $db->table('adms.zenhr_attendance_outbox as o')
+                ->leftJoinSub($employees, 'em', 'em.BadgeNumber', '=', 'o.badge_number')
+                ->leftJoin('dbo.Employee as e', 'e.Id', '=', 'em.CanonicalId')
+                ->leftJoinSub($devices, 'dm', 'dm.DeviceSerialNumber', '=', 'o.device_serial')
+                ->leftJoin('dbo.Device as d', 'd.Id', '=', 'dm.CanonicalId')
+                ->where('o.delivery_state', 'pending')
+                ->select([
+                    'o.badge_number', 'e.NAME as employee_name',
+                    'o.device_serial', 'd.DeviceAliasName as device_alias',
+                    'o.punched_at_local', 'o.direction', 'o.source_kind',
+                    'o.attempts', 'o.last_error_code',
+                ]);
+
+            if ($pendingSearch !== '') {
+                $pattern = '%'.$pendingSearch.'%';
+                $query->where(function ($q) use ($pattern) {
+                    $q->where('o.badge_number', 'like', $pattern)
+                        ->orWhere('e.NAME', 'like', $pattern)
+                        ->orWhere('o.device_serial', 'like', $pattern)
+                        ->orWhere('d.DeviceAliasName', 'like', $pattern);
+                });
+            }
+
+            $pendingRows = $query->orderBy('o.punched_at_local')
+                ->orderBy('o.event_key')
+                ->simplePaginate(50, ['*'], 'pending_page')->withQueryString();
+        }
+
         return view('admin.integrations.zenhr', [
             'credentialsReady' => $this->credentialsReady(),
             'storageReady' => $service->isProvisioned(),
             'connection' => $service->connectionInfo(),
             'syncEnabled' => (bool) config('zenhr.attendance_sync_enabled', false),
-            'outboxStats' => $outbox->stats(),
+            'outboxStats' => $outboxStats,
+            'pendingRows' => $pendingRows,
+            'pendingSearch' => $pendingSearch,
+            'autoSendConfigured' => (bool) config('zenhr.attendance_auto_send', false)
+                && (bool) config('zenhr.attendance_post_enabled', false)
+                && (bool) config('zenhr.outbox_auto_collect', false),
             'autoCollect' => (bool) config('zenhr.outbox_auto_collect', false),
         ]);
     }
