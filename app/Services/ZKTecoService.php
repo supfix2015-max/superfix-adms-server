@@ -170,6 +170,26 @@ class ZKTecoService
                 return $backfillCommand."\r\n";
             }
 
+            // Only the separate, explicitly approved fingerprint ledger may
+            // dispatch here. General command dispatch remains unchanged/OFF.
+            $fingerprintReview = app(FingerprintReviewService::class);
+            if ($fingerprintReview->authorized($request, $device, $this->hasAuthenticatedDeviceToken($request, $device))) {
+                try {
+                    $approved = $fingerprintReview->next($device);
+                    if ($approved !== null) {
+                        $this->finishRawLog($rawLog, 'processed', 1, [
+                            'mode'=>'approved_fingerprint_dispatch',
+                            'command_id'=>$approved['id'],
+                            'kind'=>$approved['kind'],
+                        ]);
+                        return $approved['payload']."\r\n";
+                    }
+                } catch (\Throwable $e) {
+                    // Never log the fingerprint, prepared wire payload or SQL bindings.
+                    Log::warning('Approved fingerprint dispatch held', ['device_id'=>$device->id]);
+                }
+            }
+
             // Ordinary commands and their replies still require a verified
             // per-device token; serial-only HTTP access grants time only.
             if (config('zkteco.command_require_token', true)
@@ -199,6 +219,13 @@ class ZKTecoService
                 $this->finishRawLog($rawLog, 'processed', 0, ['command' => null]);
                 $this->logRequestHandled($context['endpoint'], $device, ['record_count' => 0]);
 
+                return "OK\r\n";
+            }
+
+            if (FingerprintReviewService::isLegacyFingerprintPush($command)) {
+                $command->forceFill(['status'=>DeviceCommand::STATUS_FAILED,'failed_at'=>now(),
+                    'error_message'=>'Fingerprint distribution requires the approval inbox.'])->save();
+                $this->finishRawLog($rawLog,'processed',0,['mode'=>'legacy_fingerprint_push_held']);
                 return "OK\r\n";
             }
 
@@ -236,6 +263,29 @@ class ZKTecoService
             $this->attachRawLogDevice($rawLog, $device);
             $this->touchDevice($device, $request, $context);
 
+            // Acknowledgements for the separate fingerprint ledger are
+            // correlated by the reserved ID, target and its verified source.
+            $fingerprintReview = app(FingerprintReviewService::class);
+            $allReplyRecords = $this->extractCommandReplyRecords($context);
+            $scopedRecords = array_values(array_filter($allReplyRecords,
+                static fn (array $record): bool => FingerprintReviewService::wireId($record) !== null));
+            if ($scopedRecords !== []) {
+                if (! $fingerprintReview->authorized($request, $device, $this->hasAuthenticatedDeviceToken($request, $device))) {
+                    throw new AuthorizationException('Fingerprint acknowledgement authentication required');
+                }
+                $fingerprintAcknowledged = 0;
+                foreach ($scopedRecords as $record) {
+                    if ($fingerprintReview->acknowledge($device,$record)) $fingerprintAcknowledged++;
+                }
+                if (count($scopedRecords) === count($allReplyRecords)) {
+                    $this->finishRawLog($rawLog,'processed',$fingerprintAcknowledged,[
+                        'mode'=>'approved_fingerprint_ack',
+                        'acknowledged'=>$fingerprintAcknowledged,
+                    ]);
+                    return "OK\r\n";
+                }
+            }
+
             // A spoofed serial must never acknowledge an ordinary queued
             // command. The only tokenless exception recognizes the exact
             // temporary time-only command ID, and modifies no queue rows.
@@ -259,7 +309,8 @@ class ZKTecoService
                 throw new \Illuminate\Auth\Access\AuthorizationException('Device command callback authentication required');
             }
 
-            $records = $this->extractCommandReplyRecords($context);
+            $records = array_values(array_filter($allReplyRecords,
+                static fn (array $record): bool => FingerprintReviewService::wireId($record) === null));
             if ($records === []) {
                 if ($context['raw_body'] === '') {
                     $this->finishRawLog($rawLog, 'processed', 0, ['mode' => 'callback_ping']);

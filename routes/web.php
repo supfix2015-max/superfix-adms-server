@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Admin\AttendanceController;
+use App\Http\Controllers\Admin\BiometricReviewController;
 use App\Http\Controllers\Admin\CommandController;
 use App\Http\Controllers\Admin\CredentialController;
 use App\Http\Controllers\Admin\DashboardController;
@@ -22,6 +23,8 @@ Route::get('/', function () {
 
 Route::middleware(['auth', 'admin'])->prefix('admin')->name('admin.')->group(function () {
     Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
+    Route::get('/biometrics/review', [BiometricReviewController::class, 'index'])->name('biometrics.review');
+    Route::post('/biometrics/review/{biometric}', [BiometricReviewController::class, 'decide'])->whereNumber('biometric')->name('biometrics.decide');
     // AT2-only ZenHR integration; controller enforces host + enable flag.
     // OAuth callback matches the URL registered with ZenHR exactly.
     Route::get('/integrations/zenhr', [ZenHrIntegrationController::class, 'index'])

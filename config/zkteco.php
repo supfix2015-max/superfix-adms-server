@@ -48,7 +48,20 @@ foreach (preg_split('/[,\r\n]+/', (string) env('ZKTECO_DEVICE_ENDPOINTS', '')) a
     ], static fn ($value): bool => $value !== null);
 }
 
+// Optional per-terminal source IP binding for legacy HTTP deployments. Use
+// independently verified source addresses (never the shared reverse proxy IP).
+$fingerprintTrustedSources = [];
+foreach (preg_split('/[,;\r\n]+/', (string) env('ZKTECO_FINGERPRINT_TRUSTED_SOURCES', '')) as $mapping) {
+    [$sn, $ip] = array_pad(array_map('trim', explode('=', $mapping, 2)), 2, '');
+    if ($sn !== '' && filter_var($ip, FILTER_VALIDATE_IP) !== false) {
+        $fingerprintTrustedSources[$sn] = $ip;
+    }
+}
+
 return [
+    'fingerprint_review_dispatch' => filter_var(env('ZKTECO_FINGERPRINT_REVIEW_DISPATCH', false), FILTER_VALIDATE_BOOLEAN),
+    'fingerprint_review_trusted_sources' => $fingerprintTrustedSources,
+    'fingerprint_review_trusted_proxies' => array_values(array_filter(array_map('trim', explode(',', (string) env('ZKTECO_FINGERPRINT_TRUSTED_PROXIES', ''))))),
     'auto_register_devices' => env('ZKTECO_AUTO_REGISTER_DEVICES', false),
     'require_token' => env('ZKTECO_REQUIRE_TOKEN', true),
     'token_query_key' => env('ZKTECO_TOKEN_QUERY_KEY', 'token'),

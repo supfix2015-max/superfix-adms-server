@@ -41,6 +41,7 @@
                 ]],
                 ['label' => 'Credentials & Enrollment', 'icon' => 'bi-fingerprint', 'children' => [
                     ['label' => 'Credentials', 'icon' => 'bi-person-vcard', 'route' => route('admin.credentials.index'), 'matches' => ['admin.credentials.index']],
+                    ['label' => 'Fingerprint Review', 'icon' => 'bi-fingerprint', 'route' => route('admin.biometrics.review'), 'matches' => ['admin.biometrics.review']],
                     ['label' => 'Missing Credentials', 'icon' => 'bi-person-exclamation', 'route' => route('admin.credentials.no-credential'), 'matches' => ['admin.credentials.no-credential']],
                 ]],
             ],
