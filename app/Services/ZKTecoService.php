@@ -222,6 +222,13 @@ class ZKTecoService
                 return "OK\r\n";
             }
 
+            if (FingerprintReviewService::isLegacyFingerprintPush($command)) {
+                $command->forceFill(['status'=>DeviceCommand::STATUS_FAILED,'failed_at'=>now(),
+                    'error_message'=>'Fingerprint distribution requires the approval inbox.'])->save();
+                $this->finishRawLog($rawLog,'processed',0,['mode'=>'legacy_fingerprint_push_held']);
+                return "OK\r\n";
+            }
+
             $payload = $this->commandFormatter->format($command);
             $this->markCommandAsDispatched($command, $payload);
 
