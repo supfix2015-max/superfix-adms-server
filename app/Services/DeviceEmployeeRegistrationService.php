@@ -95,7 +95,7 @@ final class DeviceEmployeeRegistrationService
                     return $this->rows()->where('id',$id)->first();
                 }
                 // Repeated uploads must not undo a human decision or erase a conflict.
-                if ($old->state==='pending' && $state!=='pending') {
+                if (($old->state==='pending' && $state!=='pending') || ($state==='duplicate' && $old->state!=='rejected')) {
                     $this->rows()->where('id',$old->id)->update(['state'=>$state,'existing_name'=>$directory?->NAME,'updated_at'=>now('UTC')]);
                 }
                 return $this->rows()->where('id',$old->id)->first();
@@ -113,8 +113,8 @@ final class DeviceEmployeeRegistrationService
                     $state='pending';
                 }
             }
-            if (in_array($state,['registered','existing'],true) && $state!=='duplicate') {
-                if (self::sameName($directory?->NAME ?? $name,$name)) $this->repairPlaceholder($code,$name);
+            if (in_array($state,['registered','existing'],true) && (!$directory || self::sameName($directory->NAME,$name))) {
+                if ($trusted || $state==='registered') $this->repairPlaceholder($code,$name);
                 if ($table!=='OPERLOG' && $trusted && !$this->blocked($code,(int)$device->id)) $accepted[]=$record;
             }
         }
