@@ -51,7 +51,7 @@
                     $selectable = $targets->filter(fn ($t) => (int)$t->id !== (int)$row->device_id && !$history->contains(fn ($d) => (int)$d->target_device_id === (int)$t->id));
                 @endphp
                 <tr>
-                    <td><strong>{{ $row->employee_code }}</strong><div>{{ $row->employee?->name ?: 'Verify against HR directory' }}</div></td>
+                    <td><strong>{{ $row->employee_code }}</strong><div>{{ $directoryNames->get($row->employee_code) ?: ($row->employee?->name ?: 'Verify against HR directory') }}</div></td>
                     <td>{{ $row->device?->name ?: 'Device '.$row->device_id }}<div class="small text-secondary">{{ $row->device?->serial_number }}</div></td>
                     <td>{{ $row->template_index ?? '—' }}</td>
                     <td class="text-nowrap">{{ $row->created_at?->copy()->timezone('Asia/Dubai')->format('Y-m-d H:i:s') ?? '—' }}<div class="small text-secondary">Updated: {{ $row->updated_at?->copy()->timezone('Asia/Dubai')->format('Y-m-d H:i:s') ?? '—' }}</div></td>
