@@ -47,6 +47,17 @@ final class BiometricReviewController extends Controller
             ->orderByDesc('updated_at')->orderByDesc('id')
             ->simplePaginate(50)->withQueryString();
 
+        $directoryNames = collect();
+        if ($rows->isNotEmpty()) {
+            try {
+                $directoryNames = DB::connection('legacy_sqlsrv')->table('dbo.Employee')
+                    ->select('BadgeNumber')->selectRaw('MAX(NAME) AS employee_name')
+                    ->whereIn('BadgeNumber',$rows->getCollection()->pluck('employee_code')->unique()->all())
+                    ->groupBy('BadgeNumber')->havingRaw('COUNT_BIG(*) = 1')->pluck('employee_name','BadgeNumber');
+            } catch (\Illuminate\Database\QueryException $e) {
+                // Existing ADMS metadata remains available if the directory is down.
+            }
+        }
         $ready = $service->ready();
         $targets = $ready ? $service->targets() : collect();
         $decisions = collect();
@@ -61,7 +72,7 @@ final class BiometricReviewController extends Controller
         }
         $enabled = (bool) config('zkteco.fingerprint_review_dispatch',false);
         return response()->view('admin.biometrics.review',compact(
-            'rows','search','count','ready','targets','decisions','counts','enabled'
+            'rows','search','count','ready','targets','decisions','counts','enabled','directoryNames'
         ))->header('Cache-Control','private, no-store');
     }
 
@@ -73,7 +84,7 @@ final class BiometricReviewController extends Controller
             'action'=>['required',Rule::in(['approve','reject'])],
             'devices'=>['required_if:action,approve','array','max:100'],
             'devices.*'=>['integer','min:1','distinct'],
-            'confirm'=>['required_if:action,approve','accepted'],
+            'confirm'=>['exclude_unless:action,approve','required','accepted'],
             'create_user'=>['nullable','boolean'],
         ]);
         $added = $service->decide($biometric,$data['version'],$data['action'],
