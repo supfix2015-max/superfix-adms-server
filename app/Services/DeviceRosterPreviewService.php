@@ -99,14 +99,25 @@ final class DeviceRosterPreviewService
         return $serial;
     }
 
+    public function hasActiveCapture(Request $request,array $context): bool
+    {
+        if (!$request->isMethod('POST')) return false;
+        $table=strtoupper(trim((string)($context['table'] ?? '')));
+        if (!in_array($table,['USERINFO','OPERLOG',''],true)) return false;
+        if ($table!=='USERINFO' && !preg_match('/(?:^|[\r\n\t ])(?:Name|Card|CardNo)\s*=/i',$context['raw_body'])) return false;
+        $serial=$this->requestSerial($request);
+        $state=$serial===null?null:$this->state($serial);
+        return $state && $state['issued_at'] && $state['status']!=='closed';
+    }
+
     // Invoked before createRawLog(): no raw roster data is written to SQL.
     // ATTLOG and unrelated biometric-only packets continue normally.
-    public function capture(Request $request,array $context,ZKTecoPayloadParser $parser): ?string
+    public function capture(Request $request,Device $device,array $context,ZKTecoPayloadParser $parser): ?string
     {
         $serial=$this->requestSerial($request);
         if ($serial===null || !$request->isMethod('POST')) return null;
         $state=$this->state($serial);
-        if (!$state || !$state['issued_at'] || $state['status']==='closed') return null;
+        if (!$state || !$state['issued_at'] || $state['status']==='closed' || (int)$state['device_id']!==(int)$device->id) return null;
         $table=strtoupper(trim((string)($context['table'] ?? '')));
         if (!in_array($table,['USERINFO','OPERLOG',''],true) || $context['raw_body']==='') return null;
         $records=$parser->parseUserPayload($context['raw_body'])['records'] ?? [];
