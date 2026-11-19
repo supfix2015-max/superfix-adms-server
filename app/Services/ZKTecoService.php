@@ -173,12 +173,14 @@ class ZKTecoService
             // Only the separate, explicitly approved fingerprint ledger may
             // dispatch here. General command dispatch remains unchanged/OFF.
             $fingerprintReview = app(FingerprintReviewService::class);
-            if ($fingerprintReview->authorized($request, $device, $this->hasAuthenticatedDeviceToken($request, $device))) {
+            $fingerprintAuthorization = $fingerprintReview->authorizationMode($request, $device, $this->hasAuthenticatedDeviceToken($request, $device));
+            if ($fingerprintAuthorization !== null) {
                 try {
                     $approved = $fingerprintReview->next($device);
                     if ($approved !== null) {
                         $this->finishRawLog($rawLog, 'processed', 1, [
                             'mode'=>'approved_fingerprint_dispatch',
+                            'authorization_mode'=>$fingerprintAuthorization,
                             'command_id'=>$approved['id'],
                             'kind'=>$approved['kind'],
                         ]);
@@ -191,7 +193,7 @@ class ZKTecoService
             }
 
             // Ordinary commands and their replies still require a verified
-            // per-device token; serial-only HTTP access grants time only.
+            // per-device token; scoped legacy exceptions above do not open the general queue.
             if (config('zkteco.command_require_token', true)
                 && ! $this->hasAuthenticatedDeviceToken($request, $device)) {
                 $this->finishRawLog($rawLog, 'processed', 0, [
@@ -270,7 +272,8 @@ class ZKTecoService
             $scopedRecords = array_values(array_filter($allReplyRecords,
                 static fn (array $record): bool => FingerprintReviewService::wireId($record) !== null));
             if ($scopedRecords !== []) {
-                if (! $fingerprintReview->authorized($request, $device, $this->hasAuthenticatedDeviceToken($request, $device))) {
+                $fingerprintAuthorization = $fingerprintReview->authorizationMode($request, $device, $this->hasAuthenticatedDeviceToken($request, $device));
+                if ($fingerprintAuthorization === null) {
                     throw new AuthorizationException('Fingerprint acknowledgement authentication required');
                 }
                 $fingerprintAcknowledged = 0;
@@ -280,6 +283,7 @@ class ZKTecoService
                 if (count($scopedRecords) === count($allReplyRecords)) {
                     $this->finishRawLog($rawLog,'processed',$fingerprintAcknowledged,[
                         'mode'=>'approved_fingerprint_ack',
+                        'authorization_mode'=>$fingerprintAuthorization,
                         'acknowledged'=>$fingerprintAcknowledged,
                     ]);
                     return "OK\r\n";

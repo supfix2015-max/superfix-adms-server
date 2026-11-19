@@ -184,18 +184,52 @@ final class FingerprintReviewService
 
     public function authorized(Request $request, Device $device, bool $tokenVerified): bool
     {
-        if (! config('zkteco.fingerprint_review_dispatch', false)) return false;
-        if ($tokenVerified) return true;
-        // Explicit static serial/IP mapping, never inferred from heartbeat or
-        // forwarded headers supplied by an untrusted client. No serial-only release.
+        return $this->authorizationMode($request, $device, $tokenVerified) !== null;
+    }
+
+    public function authorizationMode(Request $request, Device $device, bool $tokenVerified): ?string
+    {
+        if (! config('zkteco.fingerprint_review_dispatch', false)) return null;
+        if ($tokenVerified) return 'token';
+
+        // Keep the independently verified IP mode. Never bind identity to the shared proxy.
         $mapping = (array) config('zkteco.fingerprint_review_trusted_sources', []);
         $expected = $mapping[(string) $device->serial_number] ?? null;
-        if (! is_string($expected) || filter_var($expected,FILTER_VALIDATE_IP) === false) return false;
         $proxies = (array) config('zkteco.fingerprint_review_trusted_proxies', []);
-        // Never treat the reverse proxy or a wildcard as a device identity.
-        if (in_array($expected,$proxies,true) || in_array($expected,['127.0.0.1','::1','0.0.0.0','::'],true)) return false;
-        $ip = self::verifiedSourceIp((string)$request->server('REMOTE_ADDR'), (string)$request->header('X-Forwarded-For',''), $proxies);
-        return $ip !== null && hash_equals($expected,$ip);
+        if (is_string($expected) && filter_var($expected,FILTER_VALIDATE_IP) !== false
+            && !in_array($expected,$proxies,true) && !in_array($expected,['127.0.0.1','::1','0.0.0.0','::'],true)) {
+            $ip = self::verifiedSourceIp((string)$request->server('REMOTE_ADDR'), (string)$request->header('X-Forwarded-For',''), $proxies);
+            if ($ip !== null && hash_equals($expected,$ip)) return 'verified_ip';
+        }
+
+        // An explicit IP binding must not silently degrade to serial-only.
+        if (array_key_exists((string)$device->serial_number,$mapping)) return null;
+        if (!config('zkteco.fingerprint_review_serial_only',false)) return null;
+        if (!$this->serialOnlyRequestMatches($request,$device)) return null;
+        try {
+            return $this->registered($device) ? 'serial_only_unverified' : null;
+        } catch (\Illuminate\Database\QueryException $e) {
+            return null;
+        }
+    }
+
+    private function serialOnlyRequestMatches(Request $request, Device $device): bool
+    {
+        // This is a narrowly scoped risk-accepted compatibility exception, not authentication.
+        // No arbitrary queued commands, no auto employee registrations, no unknown serials.
+        if (strcasecmp($request->getHost(),'at1.superfix.ae') !== 0) return false;
+        $path = trim($request->path(),'/');
+        if (!in_array($path,['iclock/getrequest','iclock/devicecmd'],true)) return false;
+        $query = $request->query();
+        $serial = $query['SN'] ?? $query['sn'] ?? null;
+        $expected = (string)$device->serial_number;
+        $listed = (array)config('zkteco.fingerprint_review_serial_only_serials',[]);
+        $tokenKey = (string)config('zkteco.token_query_key','token');
+        if (array_key_exists($tokenKey,$query) || $request->headers->has('X-Device-Token')
+            || $request->headers->has('Authorization')) return false;
+        return $expected !== '' && is_string($serial) && hash_equals($expected,$serial)
+            && (!isset($query['SN'],$query['sn']) || $query['SN']===$query['sn'])
+            && in_array($expected,$listed,true);
     }
 
     public static function verifiedSourceIp(string $remote, string $forwarded, array $proxies): ?string

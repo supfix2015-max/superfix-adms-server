@@ -29,6 +29,15 @@ This feature receives existing uploaded fingerprints; it does not request all te
 5. Select the real employee, device(s), and optional user record update. USERINFO sends PIN/name/normal privilege only; it can update an existing user. Verify a person's actual fingerprint works on the test target. Device ACK is not a physical authentication test.
 6. Only then select further targets. Offline authorized targets wait. Conflicting known slots, stale source versions, incompatible known algorithms and unverified delivery are held. Unknown/failed delivery needs operator investigation; no automatic retry/replacement.
 
+## Legacy serial-only compatibility (opt-in, high risk)
+
+For firmware that cannot transmit its assigned token, an operator can explicitly enable the exception below. Prefer token-authenticated, encrypted/private transport whenever practical. A serial is not a secret: an impersonator may retrieve pending biometric templates or spoof acknowledgements. HTTP does not protect them in transit.
+
+       ZKTECO_FINGERPRINT_REVIEW_SERIAL_ONLY=true
+       ZKTECO_FINGERPRINT_REVIEW_SERIAL_ONLY_SERIALS=REPLACE_WITH_ONE_ORIGINAL_SERIAL
+
+Use exact, comma-separated original roster serials, never a wildcard. Start with one terminal; existing approved pending jobs for that serial become eligible. The exception only covers the AT1 host and the ADMS getrequest/devicecmd paths. A configured IP binding cannot fall back to serial-only; requests supplying an invalid credential also cannot fall back. No arbitrary commands, no automatic employee registration, and no new-device authorization are granted. Keep ZKTECO_COMMAND_REQUIRE_TOKEN=true and ZKTECO_DISPATCH_COMMANDS=false. Raw request processing metadata identifies serial_only_unverified. Disable the flag to revoke the exception.
+
 ## Operational notes
 
 - The old automatic replay listener and legacy UDP distribution jobs are held, including face templates from that mixed path. Generic fingerprint queue dispatch is also held; other ordinary commands retain their existing settings. This does not enable command dispatch globally or change the inbound ATTLOG/ZenHR flow.

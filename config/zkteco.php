@@ -60,6 +60,9 @@ foreach (preg_split('/[,;\r\n]+/', (string) env('ZKTECO_FINGERPRINT_TRUSTED_SOUR
 
 return [
     'employee_registration_auto' => filter_var(env('ZKTECO_EMPLOYEE_REGISTRATION_AUTO', false), FILTER_VALIDATE_BOOLEAN),
+    // Compatibility exception, NOT device authentication. Explicit serials only, off by default.
+    'fingerprint_review_serial_only' => filter_var(env('ZKTECO_FINGERPRINT_REVIEW_SERIAL_ONLY', false), FILTER_VALIDATE_BOOLEAN),
+    'fingerprint_review_serial_only_serials' => array_values(array_filter(array_map('trim', explode(',', (string) env('ZKTECO_FINGERPRINT_REVIEW_SERIAL_ONLY_SERIALS', ''))))),
     'fingerprint_review_dispatch' => filter_var(env('ZKTECO_FINGERPRINT_REVIEW_DISPATCH', false), FILTER_VALIDATE_BOOLEAN),
     'fingerprint_review_trusted_sources' => $fingerprintTrustedSources,
     'fingerprint_review_trusted_proxies' => array_values(array_filter(array_map('trim', explode(',', (string) env('ZKTECO_FINGERPRINT_TRUSTED_PROXIES', ''))))),
