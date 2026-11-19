@@ -29,10 +29,15 @@
         <div class="alert alert-warning">Approvals can be saved; fingerprint delivery is disabled until <code>ZKTECO_FINGERPRINT_REVIEW_DISPATCH=true</code>. General command dispatch is independent.</div>
     @endif
     <div class="alert alert-info small">
-        HTTP is supported. Delivery requires a verified device token or an explicitly configured, trusted source IP for that registered serial.
+        HTTP is supported. Normal delivery requires a verified device token or an explicitly configured, trusted source IP for that registered serial.
         Device ACK is not proof that the employee can authenticate. Known conflicting slots are held; a device may have local templates not known to the server.
         No raw fingerprint data is shown here.
     </div>
+    @if (config('zkteco.fingerprint_review_serial_only', false))
+        <div class="alert alert-warning small">
+            Legacy serial-only delivery is enabled for the explicitly configured terminals. Serial numbers can be impersonated; this is not device authentication. Public HTTP can expose fingerprint templates. General commands and automatic employee registration are not enabled by this exception.
+        </div>
+    @endif
     <form method="GET" action="{{ route('admin.biometrics.review') }}" class="d-flex flex-wrap align-items-end gap-2 mb-3">
         <div class="flex-grow-1">
             <label for="fingerprint-search" class="form-label small">Search employee code, name or device</label>
