@@ -8,7 +8,7 @@ use Illuminate\Console\Command;
 final class SendZenHrLegacyAttendanceCommand extends Command
 {
     protected $signature = 'adms:zenhr-send-legacy
-        {--limit=1 : Max punches per one verified ZenHR bulk POST, range 1-10}
+        {--limit=1 : Max punches per one verified ZenHR bulk POST, range 1-'.ZenHrLegacyAttendanceSender::MAX_LIMIT.'}
         {--apply : Make exactly one POST, only when ZENHR_ATTENDANCE_POST_ENABLED=true}';
 
     protected $description = 'Old BioWeb-compatible employee/StatusId ZenHR bulk sender; dry-run by default';
@@ -17,8 +17,8 @@ final class SendZenHrLegacyAttendanceCommand extends Command
     {
         try {
             $limit = filter_var($this->option('limit'), FILTER_VALIDATE_INT);
-            if ($limit === false || $limit < 1 || $limit > 10) {
-                $this->error('--limit must be between 1 and 10.');
+            if ($limit === false || $limit < 1 || $limit > ZenHrLegacyAttendanceSender::MAX_LIMIT) {
+                $this->error('--limit must be between 1 and '.ZenHrLegacyAttendanceSender::MAX_LIMIT.'.');
                 return self::FAILURE;
             }
 
