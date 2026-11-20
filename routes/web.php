@@ -1,10 +1,13 @@
 <?php
 
 use App\Http\Controllers\Admin\AttendanceController;
+use App\Http\Controllers\Admin\BiometricReviewController;
+use App\Http\Controllers\Admin\DeviceEmployeeRegistrationController;
 use App\Http\Controllers\Admin\CommandController;
 use App\Http\Controllers\Admin\CredentialController;
 use App\Http\Controllers\Admin\DashboardController;
 use App\Http\Controllers\Admin\DeviceController;
+use App\Http\Controllers\Admin\DeviceRosterPreviewController;
 use App\Http\Controllers\Admin\DeviceConnectionStatusController;
 use App\Http\Controllers\Admin\EmployeeController;
 use App\Http\Controllers\Admin\LogController;
@@ -22,6 +25,10 @@ Route::get('/', function () {
 
 Route::middleware(['auth', 'admin'])->prefix('admin')->name('admin.')->group(function () {
     Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
+    Route::get('/employees/device-registration', [DeviceEmployeeRegistrationController::class, 'index'])->name('employees.device-registration');
+    Route::post('/employees/device-registration/{registration}', [DeviceEmployeeRegistrationController::class, 'approve'])->whereNumber('registration')->name('employees.device-registration.approve');
+    Route::get('/biometrics/review', [BiometricReviewController::class, 'index'])->name('biometrics.review');
+    Route::post('/biometrics/review/{biometric}', [BiometricReviewController::class, 'decide'])->whereNumber('biometric')->name('biometrics.decide');
     // AT2-only ZenHR integration; controller enforces host + enable flag.
     // OAuth callback matches the URL registered with ZenHR exactly.
     Route::get('/integrations/zenhr', [ZenHrIntegrationController::class, 'index'])
@@ -53,6 +60,9 @@ Route::middleware(['auth', 'admin'])->prefix('admin')->name('admin.')->group(fun
     Route::get('/device-connectivity', [DeviceConnectionStatusController::class, 'index'])->name('device-connectivity.index');
     Route::get('/connectivity', [DeviceConnectionStatusController::class, 'index'])->name('connectivity.index');
 
+    Route::get('devices/roster-preview', [DeviceRosterPreviewController::class, 'index'])->name('devices.roster-preview');
+    Route::post('devices/roster-preview/start', [DeviceRosterPreviewController::class, 'start'])->name('devices.roster-preview.start');
+    Route::post('devices/roster-preview/close', [DeviceRosterPreviewController::class, 'close'])->name('devices.roster-preview.close');
     Route::resource('devices', DeviceController::class);
     Route::post('devices/{device}/refresh-token', [DeviceController::class, 'refreshToken'])->name('devices.refresh-token');
 

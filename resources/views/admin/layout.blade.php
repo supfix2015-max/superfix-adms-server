@@ -41,6 +41,8 @@
                 ]],
                 ['label' => 'Credentials & Enrollment', 'icon' => 'bi-fingerprint', 'children' => [
                     ['label' => 'Credentials', 'icon' => 'bi-person-vcard', 'route' => route('admin.credentials.index'), 'matches' => ['admin.credentials.index']],
+                    ['label' => 'Employee Registration Requests', 'icon' => 'bi-person-plus', 'route' => route('admin.employees.device-registration'), 'matches' => ['admin.employees.device-registration']],
+                    ['label' => 'Fingerprint Review', 'icon' => 'bi-fingerprint', 'route' => route('admin.biometrics.review'), 'matches' => ['admin.biometrics.review']],
                     ['label' => 'Missing Credentials', 'icon' => 'bi-person-exclamation', 'route' => route('admin.credentials.no-credential'), 'matches' => ['admin.credentials.no-credential']],
                 ]],
             ],
@@ -49,6 +51,7 @@
             'id' => 'devices', 'label' => 'Devices & Commands', 'icon' => 'bi-hdd-network',
             'children' => [
                 ['label' => 'Device Fleet', 'icon' => 'bi-hdd-stack', 'children' => [
+                    ['label' => 'Device Employee List', 'icon' => 'bi-people', 'route' => route('admin.devices.roster-preview'), 'matches' => ['admin.devices.roster-preview']],
                     ['label' => 'Devices & License Flags', 'icon' => 'bi-hdd-network', 'route' => route('admin.devices.index'), 'matches' => ['admin.devices.index', 'admin.devices.show', 'admin.devices.edit']],
                     ['label' => 'Device Connectivity', 'icon' => 'bi-broadcast', 'route' => route('admin.device-connectivity.index'), 'matches' => ['admin.device-connectivity.index']],
                     ['label' => 'Original Device Registry', 'icon' => 'bi-database', 'route' => route('admin.legacy.index', ['tab' => 'devices']), 'matches' => ['admin.legacy.index'], 'tab' => 'devices'],
