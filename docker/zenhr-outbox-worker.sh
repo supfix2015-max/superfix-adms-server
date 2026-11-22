@@ -2,8 +2,7 @@
 # AT2: stage new punches, optionally send one ZenHR bulk POST per cycle (15 punches, 30-second normal delay).
 # ZENHR_ATTENDANCE_AUTO_SEND is an independent opt-in.
 set -u
-cd /var/www/html
-sender_halted=0
+cd /var/www/html || exit 1
 
 while :; do
     # Original dbo.Attendance is authoritative. This reconciles only valid
@@ -23,14 +22,15 @@ while :; do
         continue
     fi
 
-    # On error, the current worker halts sending until a deliberate restart.
-    # SQL unknown/inflight states also block the next send.
+    # A transient error must not latch the worker off for its entire lifetime.
+    # Every invocation independently checks durable SQL inflight/unknown/failed
+    # states BEFORE selecting a batch. Never reset or retry those rows here.
     if [ "${ZENHR_ATTENDANCE_AUTO_SEND:-false}" = "true" ] &&
-       [ "${ZENHR_ATTENDANCE_POST_ENABLED:-false}" = "true" ] &&
-       [ "$sender_halted" -eq 0 ]; then
+       [ "${ZENHR_ATTENDANCE_POST_ENABLED:-false}" = "true" ]; then
         if ! /usr/local/bin/php artisan adms:zenhr-auto-send --limit=15; then
-            echo "ZenHR sender HALTED after error; stage-only until redeploy." >&2
-            sender_halted=1
+            echo "ZenHR auto-send check failed; recheck durable safety guards in 120 seconds. No reset of delivery states." >&2
+            sleep 120
+            continue
         fi
     fi
 
