@@ -1,8 +1,8 @@
 @extends('admin.layout')
 
 @section('title', 'Fingerprint Review')
-@section('page_title', 'Fingerprint Review & Synchronization')
-@section('page_subtitle', 'Approve received fingerprint versions for selected ZKTeco devices before distribution.')
+@section('page_title', 'Fingerprint Review and Synchronization')
+@section('page_subtitle', 'Review new versions, matching copies and delivery exceptions separately.')
 
 @section('content')
 <div class="card shadow-sm p-4">
@@ -38,14 +38,21 @@
             Legacy serial-only delivery is enabled for the explicitly configured terminals. Serial numbers can be impersonated; this is not device authentication. Public HTTP can expose fingerprint templates. General commands and automatic employee registration are not enabled by this exception.
         </div>
     @endif
+    <nav class="d-flex flex-wrap gap-2 mb-3" aria-label="Fingerprint review sections">
+        @foreach (['pending'=>'Pending Review','sync'=>'Synchronization','investigation'=>'Needs Investigation','matching'=>'Matching Templates','all'=>'All Fingerprints'] as $key=>$label)
+            <a class="btn {{ $tab===$key ? 'btn-primary' : 'btn-outline-secondary' }}" href="{{ route('admin.biometrics.review',['tab'=>$key,'q'=>$search]) }}" @if($tab===$key) aria-current="page" @endif>{{ $label }} ({{ number_format($tabTotals[$key] ?? 0) }})</a>
+        @endforeach
+    </nav>
+    <p class="small text-secondary mb-3">Pending Review shows one unreviewed copy per employee, finger slot and template version. Previously received but never reviewed versions remain eligible; conflicting or invalid copies appear under Needs Investigation. Section counts are global and may overlap. Matching copies do not authorize distribution.</p>
     <form method="GET" action="{{ route('admin.biometrics.review') }}" class="d-flex flex-wrap align-items-end gap-2 mb-3">
+        <input type="hidden" name="tab" value="{{ $tab }}">
         <div class="flex-grow-1">
             <label for="fingerprint-search" class="form-label small">Search employee code, name or device</label>
             <input name="q" id="fingerprint-search" type="search" maxlength="80" value="{{ $search }}" class="form-control">
         </div>
         <button type="submit" class="btn btn-primary">Search</button>
-        <a href="{{ route('admin.biometrics.review') }}" class="btn btn-outline-secondary">Clear</a>
-        <a class="btn btn-outline-primary" href="{{ route('admin.biometrics.review', ['q'=>$search]) }}"><i class="bi bi-arrow-clockwise me-1"></i>Refresh</a>
+        <a href="{{ route('admin.biometrics.review',['tab'=>$tab]) }}" class="btn btn-outline-secondary">Clear</a>
+        <a class="btn btn-outline-primary" href="{{ route('admin.biometrics.review', ['q'=>$search,'tab'=>$tab]) }}"><i class="bi bi-arrow-clockwise me-1"></i>Refresh</a>
     </form>
     <div class="table-responsive">
         <table class="table table-sm table-hover align-middle">
@@ -53,7 +60,9 @@
             <tbody>
             @forelse ($rows as $row)
                 @php
-                    $history = $decisions->get($row->id, collect())->filter(fn ($d) => trim($d->version_hash) === $row->version_hash);
+                    $allHistory = $decisions->get($row->id, collect());
+                    $history = $allHistory->filter(fn ($d) => strtoupper(trim($d->version_hash)) === strtoupper(trim((string)$row->version_hash)));
+                    $label = $inventoryLabels[(int)$row->id] ?? 'invalid';
                     $rejected = $history->contains(fn ($d) => $d->state === 'rejected');
                     $valid = $row->has_template && $row->is_valid !== false && preg_match('/^[0-9]$/D', (string)$row->template_index) === 1;
                     $selectable = $targets->filter(fn ($t) => (int)$t->id !== (int)$row->device_id && !$history->contains(fn ($d) => (int)$d->target_device_id === (int)$t->id));
@@ -66,14 +75,24 @@
                     <td>
                         @if ($rejected)
                             <span class="badge bg-danger">Rejected</span>
+                        @elseif ($label === 'matching')
+                            <span class="badge bg-success">Matching stored copy</span>
+                            <div class="small text-secondary">Same version exists elsewhere or has a prior decision.</div>
+                        @elseif ($label === 'version_conflict')
+                            <span class="badge bg-warning text-dark">Version conflict — investigate</span>
+                        @elseif ($label === 'invalid')
+                            <span class="badge bg-secondary">Needs verification</span>
                         @elseif ($history->isEmpty())
-                            <span class="badge {{ $valid ? 'bg-warning text-dark' : 'bg-secondary' }}">{{ $valid ? 'Pending review' : 'Needs verification' }}</span>
+                            <span class="badge bg-warning text-dark">Pending review</span>
                         @else
                             <span class="badge bg-info text-dark">Reviewed · {{ $history->count() }} target(s)</span>
-                            <details class="mt-2">
+                        @endif
+                        @if ($allHistory->isNotEmpty())
+                            <details class="mt-2" @if(in_array($tab,['sync','investigation'],true)) open @endif>
                                 <summary class="small">Target results</summary>
-                                @foreach ($history as $decision)
+                                @foreach ($allHistory as $decision)
                                     <div class="small mt-1"><strong>{{ $targets->firstWhere('id',$decision->target_device_id)?->name ?: $decision->target_serial }}</strong> — {{ str_replace('_',' ',$decision->state) }}
+                                        @if (strtoupper(trim($decision->version_hash)) !== strtoupper(trim((string)$row->version_hash)))<div class="text-secondary">Prior template version</div>@endif
                                         @if ($decision->last_result)<div class="text-secondary">{{ str_replace('_',' ',$decision->last_result) }}</div>@endif
                                         @php($evidence = ($targetEvidence ?? collect())->get($decision->id))
                                         @if (($evidence['state'] ?? null) === 'matching_stored_copy')
@@ -93,7 +112,7 @@
                         @endif
                     </td>
                     <td style="min-width:220px">
-                        @if ($ready && !$rejected && $row->version_hash)
+                        @if ($ready && !$rejected && $row->version_hash && in_array($label,['pending','reviewed'],true))
                             @if ($valid && $selectable->isNotEmpty())
                                 <details>
                                     <summary class="btn btn-sm btn-outline-primary">Choose devices</summary>
@@ -113,7 +132,7 @@
                                     </form>
                                 </details>
                             @endif
-                            @if ($history->isEmpty() && preg_match('/^[0-9]$/D', (string)$row->template_index) === 1)
+                            @if ($label === 'pending' && $history->isEmpty() && preg_match('/^[0-9]$/D', (string)$row->template_index) === 1)
                                 <form method="POST" action="{{ route('admin.biometrics.decide',$row->id) }}" class="mt-2">
                                     @csrf
                                     <input type="hidden" name="version" value="{{ $row->version_hash }}">
@@ -124,7 +143,7 @@
                     </td>
                 </tr>
             @empty
-                <tr><td colspan="6" class="text-center text-secondary py-4">No matching fingerprint records.</td></tr>
+                <tr><td colspan="6" class="text-center text-secondary py-4">No fingerprint records in this section for the current search.</td></tr>
             @endforelse
             </tbody>
         </table>
