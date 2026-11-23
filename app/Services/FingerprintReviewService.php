@@ -187,9 +187,13 @@ final class FingerprintReviewService
         return $this->authorizationMode($request, $device, $tokenVerified) !== null;
     }
 
-    public function authorizationMode(Request $request, Device $device, bool $tokenVerified): ?string
+    public function authorizationMode(Request $request, Device $device, bool $tokenVerified, ?string &$denialReason = null): ?string
     {
-        if (! config('zkteco.fingerprint_review_dispatch', false)) return null;
+        $denialReason = null;
+        if (! config('zkteco.fingerprint_review_dispatch', false)) {
+            $denialReason = 'dispatch_disabled';
+            return null;
+        }
         if ($tokenVerified) return 'token';
 
         // Keep the independently verified IP mode. Never bind identity to the shared proxy.
@@ -203,33 +207,61 @@ final class FingerprintReviewService
         }
 
         // An explicit IP binding must not silently degrade to serial-only.
-        if (array_key_exists((string)$device->serial_number,$mapping)) return null;
-        if (!config('zkteco.fingerprint_review_serial_only',false)) return null;
-        if (!$this->serialOnlyRequestMatches($request,$device)) return null;
+        if (array_key_exists((string)$device->serial_number,$mapping)) {
+            $denialReason = 'trusted_source_mismatch';
+            return null;
+        }
+        if (!config('zkteco.fingerprint_review_serial_only',false)) {
+            $denialReason = 'serial_only_disabled';
+            return null;
+        }
+        if (!$this->serialOnlyRequestMatches($request,$device,$denialReason)) return null;
         try {
-            return $this->registered($device) ? 'serial_only_unverified' : null;
+            if ($this->registered($device)) return 'serial_only_unverified';
+            $denialReason = 'terminal_not_registered';
+            return null;
         } catch (\Illuminate\Database\QueryException $e) {
+            $denialReason = 'registration_lookup_failed';
             return null;
         }
     }
 
-    private function serialOnlyRequestMatches(Request $request, Device $device): bool
+    private function serialOnlyRequestMatches(Request $request, Device $device, ?string &$denialReason = null): bool
     {
         // This is a narrowly scoped risk-accepted compatibility exception, not authentication.
         // No arbitrary queued commands, no auto employee registrations, no unknown serials.
-        if (strcasecmp($request->getHost(),'at1.superfix.ae') !== 0) return false;
+        if (strcasecmp($request->getHost(),'at1.superfix.ae') !== 0) {
+            $denialReason = 'unexpected_host';
+            return false;
+        }
         $path = trim($request->path(),'/');
-        if (!in_array($path,['iclock/getrequest','iclock/devicecmd'],true)) return false;
+        if (!in_array($path,['iclock/getrequest','iclock/devicecmd'],true)) {
+            $denialReason = 'unexpected_path';
+            return false;
+        }
         $query = $request->query();
         $serial = $query['SN'] ?? $query['sn'] ?? null;
         $expected = (string)$device->serial_number;
         $listed = (array)config('zkteco.fingerprint_review_serial_only_serials',[]);
         $tokenKey = (string)config('zkteco.token_query_key','token');
         if (array_key_exists($tokenKey,$query) || $request->headers->has('X-Device-Token')
-            || $request->headers->has('Authorization')) return false;
-        return $expected !== '' && is_string($serial) && hash_equals($expected,$serial)
-            && (!isset($query['SN'],$query['sn']) || $query['SN']===$query['sn'])
-            && in_array($expected,$listed,true);
+            || $request->headers->has('Authorization')) {
+            $denialReason = 'unverified_credentials_present';
+            return false;
+        }
+        if ($expected === '' || !is_string($serial) || !hash_equals($expected,$serial)) {
+            $denialReason = 'query_serial_missing_or_mismatch';
+            return false;
+        }
+        if (isset($query['SN'],$query['sn']) && $query['SN']!==$query['sn']) {
+            $denialReason = 'conflicting_query_serials';
+            return false;
+        }
+        if (!in_array($expected,$listed,true)) {
+            $denialReason = 'serial_not_allowlisted';
+            return false;
+        }
+        return true;
     }
 
     public static function verifiedSourceIp(string $remote, string $forwarded, array $proxies): ?string
