@@ -36,4 +36,51 @@ final class FingerprintReviewServiceTest extends TestCase
         $this->assertFalse(FingerprintReviewService::isLegacyFingerprintPush(new DeviceCommand(['command'=>'SYNC_BIOMETRICS','parameters'=>['biometric_type'=>'face']])));
         $this->assertFalse(FingerprintReviewService::isLegacyFingerprintPush(new DeviceCommand(['command'=>'PULL_ATTENDANCE'])));
     }
+
+    public function test_ack_denials_have_safe_reason_codes_without_changing_authorization(): void
+    {
+        $previous = \Illuminate\Container\Container::getInstance();
+        $container = new \Illuminate\Container\Container();
+        \Illuminate\Container\Container::setInstance($container);
+        $config = new \Illuminate\Config\Repository([
+            'zkteco' => [
+                'fingerprint_review_dispatch' => true,
+                'fingerprint_review_serial_only' => true,
+                'fingerprint_review_serial_only_serials' => ['TEST001'],
+                'fingerprint_review_trusted_sources' => [],
+                'token_query_key' => 'token',
+            ],
+        ]);
+        $container->instance('config', $config);
+        try {
+            $service = new FingerprintReviewService();
+            $device = new \App\Models\Device();
+            $device->forceFill(['serial_number' => 'TEST001']);
+            $cases = [
+                ['http://wrong.example/iclock/devicecmd?SN=TEST001', [], 'unexpected_host'],
+                ['http://at1.superfix.ae/other?SN=TEST001', [], 'unexpected_path'],
+                ['http://at1.superfix.ae/iclock/devicecmd', [], 'query_serial_missing_or_mismatch'],
+                ['http://at1.superfix.ae/iclock/devicecmd?SN=TEST001&sn=OTHER', [], 'conflicting_query_serials'],
+                ['http://at1.superfix.ae/iclock/devicecmd?SN=TEST001&token=', [], 'unverified_credentials_present'],
+                ['http://at1.superfix.ae/iclock/devicecmd?SN=TEST001', ['HTTP_AUTHORIZATION' => 'Bearer invalid'], 'unverified_credentials_present'],
+            ];
+            foreach ($cases as [$url, $server, $expected]) {
+                $request = \Illuminate\Http\Request::create($url, 'POST', [], [], [], $server);
+                $reason = null;
+                $this->assertNull($service->authorizationMode($request, $device, false, $reason));
+                $this->assertSame($expected, $reason);
+            }
+            $request = \Illuminate\Http\Request::create('http://at1.superfix.ae/iclock/devicecmd?SN=TEST001', 'POST');
+            $config->set('zkteco.fingerprint_review_serial_only_serials', []);
+            $this->assertNull($service->authorizationMode($request, $device, false, $reason));
+            $this->assertSame('serial_not_allowlisted', $reason);
+            $this->assertSame('token', $service->authorizationMode($request, $device, true, $reason));
+            $this->assertNull($reason);
+            $config->set('zkteco.fingerprint_review_dispatch', false);
+            $this->assertNull($service->authorizationMode($request, $device, true, $reason));
+            $this->assertSame('dispatch_disabled', $reason);
+        } finally {
+            \Illuminate\Container\Container::setInstance($previous);
+        }
+    }
 }
