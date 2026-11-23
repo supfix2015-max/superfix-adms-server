@@ -292,8 +292,16 @@ class ZKTecoService
             $scopedRecords = array_values(array_filter($allReplyRecords,
                 static fn (array $record): bool => FingerprintReviewService::wireId($record) !== null));
             if ($scopedRecords !== []) {
-                $fingerprintAuthorization = $fingerprintReview->authorizationMode($request, $device, $this->hasAuthenticatedDeviceToken($request, $device));
+                $denialReason = null;
+                $fingerprintAuthorization = $fingerprintReview->authorizationMode($request, $device, $this->hasAuthenticatedDeviceToken($request, $device), $denialReason);
                 if ($fingerprintAuthorization === null) {
+                    // Log only fixed reason codes and internal IDs, never credentials or biometric payloads.
+                    Log::warning('Fingerprint acknowledgement authorization denied', [
+                        'device_id' => $device->id,
+                        'raw_log_id' => $rawLog->id,
+                        'reason' => $denialReason ?? 'unknown',
+                        'command_ids' => array_map(static fn (array $record): ?int => FingerprintReviewService::wireId($record), $scopedRecords),
+                    ]);
                     throw new AuthorizationException('Fingerprint acknowledgement authentication required');
                 }
                 $fingerprintAcknowledged = 0;
