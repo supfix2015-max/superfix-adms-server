@@ -31,7 +31,7 @@
     <div class="alert alert-info small">
         HTTP is supported. Normal delivery requires a verified device token or an explicitly configured, trusted source IP for that registered serial.
         Device ACK is not proof that the employee can authenticate. Known conflicting slots are held; a device may have local templates not known to the server.
-        No raw fingerprint data is shown here.
+        Matching stored copies are additional evidence only; they do not authenticate a device, establish live presence, or change the ACK status. No raw fingerprint data is shown here.
     </div>
     @if (config('zkteco.fingerprint_review_serial_only', false))
         <div class="alert alert-warning small">
@@ -75,6 +75,18 @@
                                 @foreach ($history as $decision)
                                     <div class="small mt-1"><strong>{{ $targets->firstWhere('id',$decision->target_device_id)?->name ?: $decision->target_serial }}</strong> — {{ str_replace('_',' ',$decision->state) }}
                                         @if ($decision->last_result)<div class="text-secondary">{{ str_replace('_',' ',$decision->last_result) }}</div>@endif
+                                        @php($evidence = ($targetEvidence ?? collect())->get($decision->id))
+                                        @if (($evidence['state'] ?? null) === 'matching_stored_copy')
+                                            <div><span class="badge bg-success">Matching stored copy</span></div>
+                                            <div class="text-secondary">Local record matches the approved version; not a live device check.</div>
+                                            @if ($evidence['updated_at'])
+                                                <div class="text-secondary">Stored copy updated (Dubai): {{ $evidence['updated_at']->copy()->timezone('Asia/Dubai')->format('Y-m-d H:i:s') }}</div>
+                                            @endif
+                                        @elseif (($evidence['state'] ?? null) === 'stored_copy_needs_review')
+                                            <div><span class="badge bg-warning text-dark">Stored copy needs review</span></div>
+                                        @else
+                                            <div class="text-secondary">No stored target copy; delivery may still have succeeded.</div>
+                                        @endif
                                     </div>
                                 @endforeach
                             </details>
