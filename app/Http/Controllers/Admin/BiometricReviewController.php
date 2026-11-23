@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\EmployeeBiometric;
 use App\Services\FingerprintReviewService;
+use App\Services\FingerprintReviewInventory;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -21,10 +22,23 @@ final class BiometricReviewController extends Controller
     public function index(Request $request, FingerprintReviewService $service): Response
     {
         $this->guard($request);
-        $filters = $request->validate(['q'=>['nullable','string','max:80']]);
+        $filters = $request->validate(['q'=>['nullable','string','max:80'], 'tab'=>['nullable',Rule::in(['pending','sync','investigation','matching','all'])]]);
         $search = trim((string) ($filters['q'] ?? ''));
         $query = EmployeeBiometric::query()->where('biometric_type', EmployeeBiometric::TYPE_FINGERPRINT);
-        $count = (clone $query)->count();
+        $ready = $service->ready();
+        $tab = $ready ? ($filters['tab'] ?? 'pending') : 'all';
+        // Load only metadata, not biometric payloads. Group across all devices
+        // before search/pagination so filtering cannot hide an existing match.
+        $inventoryRows = (clone $query)->select(['id','employee_code','template_index','is_valid'])
+            ->selectRaw('CASE WHEN DATALENGTH(template_data) > 0 THEN 1 ELSE 0 END AS has_template')
+            ->selectRaw(FingerprintReviewService::HASH_SQL.' AS version_hash')->get();
+        $inventoryJobs = $ready ? DB::connection('sqlsrv')->table(FingerprintReviewService::TABLE)
+            ->get(['source_biometric_id','employee_code','finger_slot','version_hash','state','target_device_id']) : collect();
+        $inventory = FingerprintReviewInventory::classify($inventoryRows, $inventoryJobs);
+        $inventoryLabels = $inventory['labels'];
+        $tabTotals = array_map('count', $inventory['tabs']);
+        $count = $tabTotals['all'];
+        if ($tab !== 'all') $query->whereIntegerInRaw('id', $inventory['tabs'][$tab]);
 
         if ($search !== '') {
             $pattern = '%'.$search.'%';
@@ -58,7 +72,6 @@ final class BiometricReviewController extends Controller
                 // Existing ADMS metadata remains available if the directory is down.
             }
         }
-        $ready = $service->ready();
         $targets = $ready ? $service->targets() : collect();
         $decisions = collect();
         $counts = collect();
@@ -104,7 +117,7 @@ final class BiometricReviewController extends Controller
         $registration = app(\App\Services\DeviceEmployeeRegistrationService::class);
         $duplicateCount = $registration->ready() ? $registration->rows()->where('state','duplicate')->count() : 0;
         return response()->view('admin.biometrics.review',compact(
-            'rows','search','count','ready','targets','decisions','counts','enabled','directoryNames','duplicateCount','targetEvidence'
+            'rows','search','count','ready','targets','decisions','counts','enabled','directoryNames','duplicateCount','targetEvidence','tab','tabTotals','inventoryLabels'
         ))->header('Cache-Control','private, no-store');
     }
 
@@ -121,7 +134,7 @@ final class BiometricReviewController extends Controller
         ]);
         $added = $service->decide($biometric,$data['version'],$data['action'],
             $data['devices'] ?? [],$request->boolean('create_user'),(int)$request->user()->id);
-        return redirect()->route('admin.biometrics.review')->with('success',
+        return redirect()->route('admin.biometrics.review',['tab'=>'sync'])->with('success',
             $data['action']==='reject' ? 'Fingerprint version rejected.' :
                 $added.' target decision(s) recorded. Delivery requires an authorized device poll.');
     }
