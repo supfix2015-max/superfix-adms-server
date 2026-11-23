@@ -70,11 +70,41 @@ final class BiometricReviewController extends Controller
             $counts = $db->table(FingerprintReviewService::TABLE)->select('state')
                 ->selectRaw('COUNT_BIG(*) AS total')->groupBy('state')->pluck('total','state');
         }
+        // Evidence is informational only. A stored copy may have come from
+        // a mirror or a serial-only upload; it never advances the delivery ledger.
+        $targetEvidence = collect();
+        if ($decisions->isNotEmpty()) {
+            $jobs = $decisions->flatten(1)->filter(fn ($d) => (int)$d->target_device_id > 0);
+            if ($jobs->isNotEmpty()) {
+                $copies = EmployeeBiometric::query()
+                    ->where('biometric_type', EmployeeBiometric::TYPE_FINGERPRINT)
+                    ->whereIn('device_id', $jobs->pluck('target_device_id')->unique()->values()->all())
+                    ->whereIn('employee_code', $jobs->pluck('employee_code')->unique()->values()->all())
+                    ->whereIn('template_index', $jobs->pluck('finger_slot')->unique()->values()->all())
+                    ->select(['device_id','employee_code','template_index','is_valid','updated_at'])
+                    ->selectRaw('CASE WHEN DATALENGTH(template_data) > 0 THEN 1 ELSE 0 END AS has_template')
+                    ->selectRaw(FingerprintReviewService::HASH_SQL.' AS version_hash')
+                    ->get()->groupBy(fn ($r) => json_encode([(int)$r->device_id,(string)$r->employee_code,(string)$r->template_index]));
+                foreach ($jobs as $job) {
+                    $key = json_encode([(int)$job->target_device_id,(string)$job->employee_code,(string)$job->finger_slot]);
+                    $records = $copies->get($key, collect());
+                    if ($records->isEmpty()) continue;
+                    $hash = strtoupper(trim((string)$job->version_hash));
+                    $match = $records->every(fn ($r) => $r->has_template && $r->is_valid !== false
+                        && preg_match('/^[A-F0-9]{64}$/D',$hash) === 1
+                        && hash_equals($hash,strtoupper(trim((string)$r->version_hash))));
+                    $targetEvidence->put($job->id, [
+                        'state' => $match ? 'matching_stored_copy' : 'stored_copy_needs_review',
+                        'updated_at' => $records->max('updated_at'),
+                    ]);
+                }
+            }
+        }
         $enabled = (bool) config('zkteco.fingerprint_review_dispatch',false);
         $registration = app(\App\Services\DeviceEmployeeRegistrationService::class);
         $duplicateCount = $registration->ready() ? $registration->rows()->where('state','duplicate')->count() : 0;
         return response()->view('admin.biometrics.review',compact(
-            'rows','search','count','ready','targets','decisions','counts','enabled','directoryNames','duplicateCount'
+            'rows','search','count','ready','targets','decisions','counts','enabled','directoryNames','duplicateCount','targetEvidence'
         ))->header('Cache-Control','private, no-store');
     }
 
