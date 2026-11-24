@@ -33,7 +33,7 @@ class LegacyAttendanceController extends Controller
             'name' => ['nullable', 'string', 'max:80'],
             'department' => ['nullable', 'string', 'max:80'],
             'device' => ['nullable', 'string', 'max:80'],
-            'per_page' => ['nullable', Rule::in(['20', '50', '100'])],
+            'per_page' => ['nullable', 'integer', 'min:1', 'max:1000'],
         ]);
 
         $tab = $filters['tab'] ?? 'employees';
