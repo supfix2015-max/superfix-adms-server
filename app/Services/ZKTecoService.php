@@ -34,6 +34,12 @@ class ZKTecoService
     public function handleCdata(Request $request): string
     {
         $context = $this->buildContext($request, '/iclock/cdata');
+        $preview = app(DeviceRosterPreviewService::class);
+        if ($preview->hasActiveCapture($request,$context)) {
+            $previewDevice = $this->resolveDevice($request,$context);
+            $viewOnly = $preview->capture($request,$previewDevice,$context,$this->payloadParser);
+            if ($viewOnly !== null) return $viewOnly;
+        }
         $rawLog = $this->createRawLog(null, $context);
 
         try {
@@ -65,7 +71,7 @@ class ZKTecoService
                 return $response;
             }
 
-            $result = $this->processCdataPayload($device, $context);
+            $result = $this->processCdataPayload($device, $context, $request);
 
             $this->finishRawLog(
                 $rawLog,
@@ -162,14 +168,47 @@ class ZKTecoService
                 $this->finishRawLog($rawLog, 'processed', 1, [
                     'mode' => 'legacy_attlog_backfill_sent',
                     'command' => 'DATA QUERY ATTLOG',
+                    'command_id' => explode(':', $backfillCommand, 3)[1],
+                    'backfill_key' => $this->historicalAttendanceQueryCacheKey(trim((string) ($device->serial_number ?: $device->sn))),
                     'authenticated' => $this->hasAuthenticatedDeviceToken($request, $device),
                 ]);
 
                 return $backfillCommand."\r\n";
             }
 
+            // Only the separate, explicitly approved fingerprint ledger may
+            // dispatch here. General command dispatch remains unchanged/OFF.
+            $fingerprintReview = app(FingerprintReviewService::class);
+            $fingerprintAuthorization = $fingerprintReview->authorizationMode($request, $device, $this->hasAuthenticatedDeviceToken($request, $device));
+            if ($fingerprintAuthorization !== null) {
+                try {
+                    $preview = app(DeviceRosterPreviewService::class)->poll($device);
+                    if ($preview !== null) {
+                        $this->finishRawLog($rawLog,'processed',$preview['hold']?0:1,[
+                            'mode'=>$preview['hold']?'roster_preview_hold':'roster_preview_query',
+                            'command_id'=>$preview['id'] ?? null,
+                            'authorization_mode'=>$fingerprintAuthorization,
+                        ]);
+                        return $preview['hold']?"OK\r\n":$preview['payload']."\r\n";
+                    }
+                    $approved = $fingerprintReview->next($device);
+                    if ($approved !== null) {
+                        $this->finishRawLog($rawLog, 'processed', 1, [
+                            'mode'=>'approved_fingerprint_dispatch',
+                            'authorization_mode'=>$fingerprintAuthorization,
+                            'command_id'=>$approved['id'],
+                            'kind'=>$approved['kind'],
+                        ]);
+                        return $approved['payload']."\r\n";
+                    }
+                } catch (\Throwable $e) {
+                    // Never log the fingerprint, prepared wire payload or SQL bindings.
+                    Log::warning('Approved fingerprint dispatch held', ['device_id'=>$device->id]);
+                }
+            }
+
             // Ordinary commands and their replies still require a verified
-            // per-device token; serial-only HTTP access grants time only.
+            // per-device token; scoped legacy exceptions above do not open the general queue.
             if (config('zkteco.command_require_token', true)
                 && ! $this->hasAuthenticatedDeviceToken($request, $device)) {
                 $this->finishRawLog($rawLog, 'processed', 0, [
@@ -197,6 +236,13 @@ class ZKTecoService
                 $this->finishRawLog($rawLog, 'processed', 0, ['command' => null]);
                 $this->logRequestHandled($context['endpoint'], $device, ['record_count' => 0]);
 
+                return "OK\r\n";
+            }
+
+            if (FingerprintReviewService::isLegacyFingerprintPush($command)) {
+                $command->forceFill(['status'=>DeviceCommand::STATUS_FAILED,'failed_at'=>now(),
+                    'error_message'=>'Fingerprint distribution requires the approval inbox.'])->save();
+                $this->finishRawLog($rawLog,'processed',0,['mode'=>'legacy_fingerprint_push_held']);
                 return "OK\r\n";
             }
 
@@ -234,6 +280,36 @@ class ZKTecoService
             $this->attachRawLogDevice($rawLog, $device);
             $this->touchDevice($device, $request, $context);
 
+            // Acknowledgements for the separate fingerprint ledger are
+            // correlated by the reserved ID, target and its verified source.
+            $fingerprintReview = app(FingerprintReviewService::class);
+            $allReplyRecords = $this->extractCommandReplyRecords($context);
+            if ($fingerprintReview->authorizationMode($request,$device,$this->hasAuthenticatedDeviceToken($request,$device)) !== null
+                && app(DeviceRosterPreviewService::class)->acknowledge($device,$allReplyRecords)) {
+                $this->finishRawLog($rawLog,'processed',1,['mode'=>'roster_preview_ack']);
+                return "OK\r\n";
+            }
+            $scopedRecords = array_values(array_filter($allReplyRecords,
+                static fn (array $record): bool => FingerprintReviewService::wireId($record) !== null));
+            if ($scopedRecords !== []) {
+                $fingerprintAuthorization = $fingerprintReview->authorizationMode($request, $device, $this->hasAuthenticatedDeviceToken($request, $device));
+                if ($fingerprintAuthorization === null) {
+                    throw new AuthorizationException('Fingerprint acknowledgement authentication required');
+                }
+                $fingerprintAcknowledged = 0;
+                foreach ($scopedRecords as $record) {
+                    if ($fingerprintReview->acknowledge($device,$record)) $fingerprintAcknowledged++;
+                }
+                if (count($scopedRecords) === count($allReplyRecords)) {
+                    $this->finishRawLog($rawLog,'processed',$fingerprintAcknowledged,[
+                        'mode'=>'approved_fingerprint_ack',
+                        'authorization_mode'=>$fingerprintAuthorization,
+                        'acknowledged'=>$fingerprintAcknowledged,
+                    ]);
+                    return "OK\r\n";
+                }
+            }
+
             // A spoofed serial must never acknowledge an ordinary queued
             // command. The only tokenless exception recognizes the exact
             // temporary time-only command ID, and modifies no queue rows.
@@ -257,7 +333,8 @@ class ZKTecoService
                 throw new \Illuminate\Auth\Access\AuthorizationException('Device command callback authentication required');
             }
 
-            $records = $this->extractCommandReplyRecords($context);
+            $records = array_values(array_filter($allReplyRecords,
+                static fn (array $record): bool => FingerprintReviewService::wireId($record) === null));
             if ($records === []) {
                 if ($context['raw_body'] === '') {
                     $this->finishRawLog($rawLog, 'processed', 0, ['mode' => 'callback_ping']);
@@ -305,15 +382,17 @@ class ZKTecoService
 
     public function handleTestPing(Request $request): string
     {
-        $context = $this->buildContext($request, '/iclock/test');
+        $endpoint = $request->is('iclock/ping') ? '/iclock/ping' : '/iclock/test';
+        $mode = $request->is('iclock/ping') ? 'ping' : 'test';
+        $context = $this->buildContext($request, $endpoint);
         $rawLog = $this->createRawLog(null, $context);
 
         try {
             $device = $this->resolveDevice($request, $context);
             $this->attachRawLogDevice($rawLog, $device);
             $this->touchDevice($device, $request, $context);
-            $this->finishRawLog($rawLog, 'processed', 0, ['mode' => 'test']);
-            $this->logRequestHandled($context['endpoint'], $device, ['mode' => 'test']);
+            $this->finishRawLog($rawLog, 'processed', 0, ['mode' => $mode]);
+            $this->logRequestHandled($context['endpoint'], $device, ['mode' => $mode]);
 
             return "OK\r\n";
         } catch (\Throwable $exception) {
@@ -324,7 +403,7 @@ class ZKTecoService
         }
     }
 
-    private function processCdataPayload(Device $device, array $context): array
+    private function processCdataPayload(Device $device, array $context, ?Request $request = null): array
     {
         if ($context['raw_body'] === '') {
             return $this->mergeDeviceMetadata($device, $context);
@@ -337,6 +416,22 @@ class ZKTecoService
 
         $acceptUserPayload = $this->shouldSyncUsersFromContext($context);
         $parsedUserPayload = $this->payloadParser->parseUserPayload($context['raw_body']);
+        $observed = 0;
+        if ($request && $parsedUserPayload['records'] !== []) {
+            $registration = app(DeviceEmployeeRegistrationService::class);
+            $trusted = app(FingerprintReviewService::class)->authorized($request,$device,$this->hasAuthenticatedDeviceToken($request,$device));
+            try {
+                $result = $registration->inspect($device,$parsedUserPayload,strtoupper(trim((string)($context['table'] ?? ''))),$trusted);
+                $parsedUserPayload = $result['parsed'];
+                $observed = $result['observed'];
+            } catch (\Illuminate\Database\QueryException $e) {
+                // Keep the raw upload for investigation; do not let a registration
+                // failure overwrite the existing employee through the legacy route.
+                $observed = count($parsedUserPayload['records']);
+                $parsedUserPayload = ['records'=>[], 'errors'=>[]];
+                Log::warning('Device registration review unavailable', ['device_id'=>$device->id]);
+            }
+        }
         $userPayload = $acceptUserPayload
             ? $parsedUserPayload
             : ['records' => [], 'errors' => []];
@@ -367,6 +462,14 @@ class ZKTecoService
 
         if ($biometricPayload['records'] !== []) {
             return $this->storeBiometrics($device, $context, $biometricPayload);
+        }
+
+        if ($observed > 0) {
+            return [
+                'type'=>'employee_registration', 'count'=>$observed, 'warnings'=>[],
+                'metadata'=>['table'=>$context['table'] ?? 'USERINFO','registration_observations'=>$observed],
+                'response'=>"OK:{$observed}\r\n",
+            ];
         }
 
         if (! $acceptUserPayload && $parsedUserPayload['records'] !== []) {
@@ -1323,6 +1426,30 @@ class ZKTecoService
 
         $key = $this->historicalAttendanceQueryCacheKey($serial);
         $cache = Cache::store('file');
+        if ($cache->get($key.':issued')) {
+            return null;
+        }
+
+        // The cache is an optimization, not the source of truth. A prior
+        // audited dispatch for this scope must survive a container redeploy.
+        // Old audit rows have no scope key; conservatively treat them as
+        // already issued rather than sending an unverified duplicate query.
+        $alreadyIssued = RawLog::withTrashed()
+            ->where('device_id', $device->id)
+            ->where('endpoint', '/iclock/getrequest')
+            ->where('processing_status', 'processed')
+            ->where('parsed_data->mode', 'legacy_attlog_backfill_sent')
+            ->where(function ($query) use ($key): void {
+                $query->where('parsed_data->backfill_key', $key)
+                    ->orWhereNull('parsed_data->backfill_key');
+            })
+            ->exists();
+
+        if ($alreadyIssued) {
+            $cache->put($key.':issued', true, 14 * 86400);
+            return null;
+        }
+
         if (! $cache->add($key.':issued', true, 14 * 86400)) {
             return null;
         }
@@ -1355,23 +1482,74 @@ class ZKTecoService
 
         $serial = trim((string) ($device->serial_number ?: $device->sn));
         $key = $this->historicalAttendanceQueryCacheKey($serial);
-        $expected = (string) Cache::store('file')->get($key.':reply-id', '');
-        if ($expected === '') {
-            return false;
-        }
+        $cache = Cache::store('file');
+        $expected = (string) $cache->get($key.':reply-id', '');
 
         foreach ($this->extractCommandReplyRecords($context) as $record) {
             $id = trim((string) ($record['ID'] ?? $record['CmdID'] ?? $record['id'] ?? ''));
             $command = strtoupper(trim((string) ($record['CMD'] ?? $record['Command'] ?? '')));
-            if ($id !== '' && hash_equals($expected, $id) && $command === 'DATA') {
-                // Return may be a negative error code. Record the exact
-                // reply status for manual diagnostics; never delete any logs.
-                Cache::store('file')->put($key.':last-response', $record, 14 * 86400);
-                return true;
+            if ($id === '' || $command !== 'DATA') {
+                continue;
             }
+
+            // A container restart or optimize:clear destroys the file-cache
+            // receipt key, even though the terminal has already executed the
+            // original one-shot DATA QUERY ATTLOG. Only acknowledge that
+            // historical reply if the SQL audit trail proves THIS device was
+            // sent THIS command ID. Never accept arbitrary tokenless replies.
+            $matchesCachedId = $expected !== '' && hash_equals($expected, $id);
+            if (! $matchesCachedId && ! $this->wasHistoricalBackfillCommandIssued($device, $id)) {
+                continue;
+            }
+
+            // Repeated acknowledgements are harmless. Returning 200/OK
+            // stops ZKTeco firmware from retrying the same valid command
+            // thousands of times and does not grant command dispatch access.
+            $cache->put($key.':reply-id', $id, 14 * 86400);
+            $cache->put($key.':last-response', $record, 14 * 86400);
+
+            return true;
         }
 
         return false;
+    }
+
+    /**
+     * Reconstruct only our own issued one-shot historical query from SQL.
+     *
+     * Its command ID is the issue-time Unix second minus 1,000,000,000.
+     * The original /iclock/getrequest audit row must match the same device,
+     * command type, and timestamp. No terminal-provided serial or command ID
+     * alone is sufficient authentication.
+     */
+    private function wasHistoricalBackfillCommandIssued(Device $device, string $commandId): bool
+    {
+        if (! ctype_digit($commandId)) {
+            return false;
+        }
+
+        $issuedAt = (int) $commandId + 1000000000;
+        if ($issuedAt <= 1000000000 || $issuedAt > now()->timestamp) {
+            return false;
+        }
+
+        $date = \Carbon\CarbonImmutable::createFromTimestamp($issuedAt, 'UTC');
+
+        return RawLog::query()
+            ->where('device_id', $device->id)
+            ->where('endpoint', '/iclock/getrequest')
+            ->where('processing_status', 'processed')
+            ->whereBetween('created_at', [
+                $date->subSeconds(3)->format('Y-m-d H:i:s'),
+                $date->addSeconds(3)->format('Y-m-d H:i:s'),
+            ])
+            ->orderByDesc('id')
+            ->limit(15)
+            ->get(['created_at', 'parsed_data'])
+            ->contains(static fn (RawLog $log): bool =>
+                ($log->parsed_data['mode'] ?? null) === 'legacy_attlog_backfill_sent'
+                && abs($log->created_at->timestamp - $issuedAt) <= 3
+            );
     }
 
     private function ensureAutomaticTimeSyncQueued(Device $device): void

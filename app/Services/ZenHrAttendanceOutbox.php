@@ -8,8 +8,8 @@ use Illuminate\Support\Facades\DB;
 use RuntimeException;
 
 /**
- * AT2 ONLY. Reads the existing original SQL and ADMS staging, never changes
- * either attendance table. Deduplicates the two copies of the same punch.
+ * AT2 ONLY. Collects outbound events from original dbo.Attendance only.
+ * Never changes either attendance table; staged-only punches are not sendable.
  * Collecting an outbox event is NOT delivering it to ZenHR.
  */
 final class ZenHrAttendanceOutbox
@@ -81,7 +81,7 @@ final class ZenHrAttendanceOutbox
         if ($cutoff === false || $cutoff->format('Y-m-d H:i:s') !== $cutoffLocal) {
             throw new RuntimeException('Invalid ZENHR_OUTBOX_CUTOFF_LOCAL date.');
         }
-        $utcStart = $cutoff->utc()->format('Y-m-d H:i:s');
+        // Original dbo.Attendance stores device-local UAE wall-clock times.
 
         $original = DB::connection('legacy_sqlsrv')->table('dbo.Attendance')
             ->where('Id', '>', $dbCursor)
@@ -90,12 +90,10 @@ final class ZenHrAttendanceOutbox
             ->limit($limit)
             ->get(['Id', 'BadgeNumber', 'DeviceSerialNumber', 'VerifyTime', 'Status', 'VerifyType']);
 
-        $staged = AttendanceLog::query()
-            ->where('id', '>', $admsCursor)
-            ->where('log_time', '>=', $utcStart)
-            ->orderBy('id')
-            ->limit($limit)
-            ->get(['id', 'device_id', 'employee_code', 'log_time', 'raw_payload', 'log_type', 'verify_type']);
+        // Authoritative-ledger policy: the outbound outbox collects only
+        // records committed to original dbo.Attendance. Staged-only punches
+        // are NOT eligible for ZenHR, even when the staging record is valid.
+        $staged = collect();
 
         $deviceSerials = $staged->pluck('device_id')->filter()->unique()->values()->all();
         $serials = $deviceSerials === [] ? collect()
@@ -108,6 +106,7 @@ final class ZenHrAttendanceOutbox
         $needsReview = 0;
         $newDboCursor = $dbCursor;
         $newAdmsCursor = $admsCursor;
+        $originalPromotions = [];
         $seen = [];
 
         foreach ($original as $row) {
@@ -120,6 +119,7 @@ final class ZenHrAttendanceOutbox
                 (string) ($row->Status ?? ''),
                 (string) ($row->VerifyType ?? '')
             );
+            $originalPromotions[] = $item;
             $this->offer($item, $seen, $new, $duplicate, $needsReview, $proposed);
         }
 
@@ -145,7 +145,27 @@ final class ZenHrAttendanceOutbox
         }
 
         if ($apply) {
-            $db->transaction(function () use ($db, $new, $newDboCursor, $newAdmsCursor): void {
+            $db->transaction(function () use ($db, $new, $newDboCursor, $newAdmsCursor, $originalPromotions): void {
+                // Older staging-only outbox events may already exist. Promote
+                // their *source identity* only after finding the matching
+                // authoritative dbo attendance event. Never reset delivery
+                // state, retry sent/unknown/inflight records, or change history.
+                foreach ($originalPromotions as $item) {
+                    $db->table(self::TABLE)
+                        ->where('event_key', $item['event_key'])
+                        ->where('source_kind', 'adms')
+                        ->whereIn('delivery_state', ['pending', 'needs_review'])
+                        ->where('attempts', 0)
+                        ->whereNull('last_attempt_at')
+                        ->update([
+                            'source_kind' => 'dbo',
+                            'source_id' => $item['source_id'],
+                            'device_serial' => $item['device_serial'],
+                            'direction' => $item['direction'],
+                            'verify_type' => $item['verify_type'],
+                            'updated_at' => now('UTC')->format('Y-m-d H:i:s'),
+                        ]);
+                }
                 foreach ($new as $row) {
                     // Cross-source events collide on event_key, intentionally.
                     if (! $db->table(self::TABLE)->where('event_key', $row['event_key'])->exists()) {

@@ -17,4 +17,9 @@ return [
         FILTER_VALIDATE_BOOLEAN
     ),
     'attendance_wallclock_timezone' => env('LEGACY_SQLSRV_ATTENDANCE_TIMEZONE', ''),
+    // Separate opt-in for staged-to-dbo promotion. Does not enable any
+    // original SQL UPDATE or DELETE; requires --apply on the command.
+    'attendance_promotion_enabled' => filter_var(
+        env('LEGACY_SQLSRV_ATTENDANCE_PROMOTER_ENABLED', false), FILTER_VALIDATE_BOOLEAN
+    ),
 ];

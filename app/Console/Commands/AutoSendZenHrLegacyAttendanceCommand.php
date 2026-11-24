@@ -9,11 +9,11 @@ use RuntimeException;
 
 /**
  * One supervised automatic batch per invocation; the existing
- * zenhr-outbox worker runs it once per minute only when opted in.
+ * zenhr-outbox worker runs it each cycle only when opted in.
  */
 final class AutoSendZenHrLegacyAttendanceCommand extends Command
 {
-    protected $signature = 'adms:zenhr-auto-send {--limit=10 : Punches per batch, max 10}';
+    protected $signature = 'adms:zenhr-auto-send {--limit='.ZenHrLegacyAttendanceSender::MAX_LIMIT.' : Punches per batch, max '.ZenHrLegacyAttendanceSender::MAX_LIMIT.'}';
 
     protected $description = 'Deliver one verified legacy-format ZenHR batch; stop on any unknown result';
 
@@ -29,8 +29,8 @@ final class AutoSendZenHrLegacyAttendanceCommand extends Command
             }
 
             $limit = filter_var($this->option('limit'), FILTER_VALIDATE_INT);
-            if ($limit === false || $limit < 1 || $limit > 10) {
-                throw new RuntimeException('Invalid batch limit, must be 1-10.');
+            if ($limit === false || $limit < 1 || $limit > ZenHrLegacyAttendanceSender::MAX_LIMIT) {
+                throw new RuntimeException('Invalid batch limit, must be 1-'.ZenHrLegacyAttendanceSender::MAX_LIMIT.'.');
             }
 
             $db = DB::connection('sqlsrv');

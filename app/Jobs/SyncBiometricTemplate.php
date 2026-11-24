@@ -32,10 +32,12 @@ class SyncBiometricTemplate implements ShouldQueue
 
     public function handle(BiometricSyncService $biometricSyncService): void
     {
-        $template = BiometricTemplate::query()->with(['employee', 'device'])->findOrFail($this->biometricTemplateId);
-        $targetDevice = Device::query()->findOrFail($this->targetDeviceId);
-
-        $biometricSyncService->pushTemplateToDevice($targetDevice, $template, $this->overwrite);
+        // Legacy jobs queued before review-only mode have no approval record.
+        // Do not replay them, even if the target is reachable via UDP.
+        \Illuminate\Support\Facades\Log::info('adms.biometric_legacy_job.held_for_review', [
+            'template_id' => $this->biometricTemplateId,
+            'target_device_id' => $this->targetDeviceId,
+        ]);
     }
 
     public function failed(?Throwable $exception): void
