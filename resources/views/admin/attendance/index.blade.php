@@ -75,6 +75,10 @@
                         <option value="error" {{ ($filters['status'] ?? '') === 'error' ? 'selected' : '' }}>Error</option>
                     </select>
                 </div>
+                <div class="col-md-3">
+                    <label class="form-label" for="live-perpage">Rows</label>
+                    <input type="number" class="form-control" id="live-perpage" name="per_page" min="1" max="1000" value="{{ $filters['per_page'] ?? 20 }}">
+                </div>
                 <div class="col-12">
                     <div class="toolbar-cluster">
                         <button type="submit" class="btn btn-primary">Apply Filters</button>
@@ -89,7 +93,7 @@
         <div class="card-header">
             <div>
                 <h5 class="shell-title">Attendance Transactions</h5>
-                <div class="shell-subtitle">{{ $logs->total() }} records matched the selected attendance filters.</div>
+                <div class="shell-subtitle">Total Records: <strong>{{ number_format($logs->total()) }}</strong> · {{ number_format($logs->count()) }} this page · Latest first</div>
             </div>
         </div>
         <div class="card-body p-0">
