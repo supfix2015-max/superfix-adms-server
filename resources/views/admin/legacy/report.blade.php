@@ -26,6 +26,10 @@
         </select>
         <input class="form-control form-control-sm" type="date" name="date_from" value="{{ $filters['date_from'] }}">
         <input class="form-control form-control-sm" type="date" name="date_to" value="{{ $filters['date_to'] }}">
+        <div>
+            <label for="report-perpage" class="small">Rows</label>
+            <input class="form-control form-control-sm" style="min-width:80px;width:90px" type="number" name="per_page" id="report-perpage" min="1" max="1000" value="{{ $filters['per_page'] ?? 20 }}">
+        </div>
         <button class="btn btn-success btn-sm" type="submit">Search</button>
         <a class="btn btn-outline-dark btn-sm" href="{{ route('admin.attendance-reports.show', ['report'=>$report]) }}">Reset</a>
     </form>
@@ -74,9 +78,10 @@
     </div>
     <div class="d-flex justify-content-between flex-wrap gap-3 p-3">
         <span class="text-secondary small">
-            {{ $rows->count() }} grouped result rows this page · Source: dbo.Attendance · UAE local time
+            Total Records: <strong>{{ number_format($rows->total()) }}</strong> · {{ number_format($rows->count()) }} this page · Latest first<br>
+            Source: dbo.Attendance · Grouped report results · UAE local time
         </span>
-        {{ $rows->links('pagination::simple-bootstrap-5') }}
+        {{ $rows->links('pagination::bootstrap-5') }}
     </div>
 </div>
 @endsection
