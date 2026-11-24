@@ -24,6 +24,7 @@ class LegacyAttendanceReportController extends Controller
         abort_unless(config('legacy_attendance.browser_enabled', false), 404);
         abort_unless(isset(self::REPORTS[$report]), 404);
         $filters = $request->validate([
+            'per_page' => ['nullable', 'integer', 'min:1', 'max:1000'],
             'badge' => ['nullable', 'string', 'max:80'],
             'department' => ['nullable', 'string', 'max:80'],
             'date_from' => ['nullable', 'date_format:Y-m-d'],
@@ -74,11 +75,15 @@ class LegacyAttendanceReportController extends Controller
                 ->select('BadgeNumber'));
         }
 
+        $filters['per_page'] = (int) ($filters['per_page'] ?? 20);
         if ($report !== 'summary') {
             $query->orderByRaw($dateExpr.' DESC');
+        } else {
+            $query->orderByRaw('MAX(a.VerifyTime) DESC');
         }
+        // Laravel counts the grouped query before applying the page limit.
         $rows = $query->orderBy('a.BadgeNumber')
-            ->simplePaginate(50)->withQueryString();
+            ->paginate($filters['per_page'])->withQueryString();
 
         $ids = $rows->getCollection()->pluck('BadgeNumber')->filter()->unique()->values()->all();
         $employees = $ids === [] ? collect() : $db->table('dbo.Employee')

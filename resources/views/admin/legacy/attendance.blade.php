@@ -79,11 +79,7 @@
         </div>
         <div class="field" style="flex:0 1 95px;min-width:90px">
             <label for="punch-perpage">Rows</label>
-            <select name="per_page" id="punch-perpage" class="form-select">
-                @foreach ([20, 50, 100] as $size)
-                    <option value="{{ $size }}" @selected((int) ($filters['per_page'] ?? 20) === $size)>{{ $size }}</option>
-                @endforeach
-            </select>
+            <input type="number" name="per_page" id="punch-perpage" class="form-control" min="1" max="1000" value="{{ $filters['per_page'] ?? 20 }}">
         </div>
         <div class="action">
             <button class="btn btn-success btn-sm" type="submit">

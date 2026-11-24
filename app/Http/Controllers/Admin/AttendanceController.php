@@ -23,7 +23,9 @@ class AttendanceController extends Controller
             'date_to' => $request->input('date_to'),
         ];
 
-        $logs = $this->repository->paginateWithFilters($filters, 50);
+        $validated = $request->validate(['per_page' => ['nullable', 'integer', 'min:1', 'max:1000']]);
+        $filters['per_page'] = (int) ($validated['per_page'] ?? 20);
+        $logs = $this->repository->paginateWithFilters($filters, $filters['per_page'])->withQueryString();
         $devices = Device::all();
         $employees = Employee::all();
 
